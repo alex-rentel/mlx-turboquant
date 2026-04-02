@@ -173,25 +173,64 @@ def unpack_4bit(packed: mx.array, d: int) -> mx.array:
     return result.reshape(*shape[:-1], d)
 
 
+def pack_1bit(indices: mx.array) -> mx.array:
+    """Pack 1-bit indices: 8 values per byte."""
+    shape = indices.shape
+    d = shape[-1]
+    assert d % 8 == 0, f"Last dimension {d} must be divisible by 8 for 1-bit packing"
+
+    flat = indices.reshape(-1, d)
+    grouped = flat.reshape(-1, d // 8, 8)
+
+    packed = (grouped[..., 0].astype(mx.uint8)
+              | (grouped[..., 1].astype(mx.uint8) << 1)
+              | (grouped[..., 2].astype(mx.uint8) << 2)
+              | (grouped[..., 3].astype(mx.uint8) << 3)
+              | (grouped[..., 4].astype(mx.uint8) << 4)
+              | (grouped[..., 5].astype(mx.uint8) << 5)
+              | (grouped[..., 6].astype(mx.uint8) << 6)
+              | (grouped[..., 7].astype(mx.uint8) << 7))
+
+    return packed.reshape(*shape[:-1], d // 8)
+
+
+def unpack_1bit(packed: mx.array, d: int) -> mx.array:
+    """Unpack 1-bit packed indices back to uint8."""
+    shape = packed.shape
+    flat = packed.reshape(-1, shape[-1])
+
+    bits = []
+    for i in range(8):
+        bits.append((flat >> i) & 0x01)
+
+    result = mx.stack(bits, axis=-1)
+    result = result.reshape(-1, d)
+    return result.reshape(*shape[:-1], d)
+
+
 def pack_indices(indices: mx.array, bits: int) -> mx.array:
     """Pack indices at the given bit-width."""
-    if bits == 2:
+    if bits == 1:
+        return pack_1bit(indices)
+    elif bits == 2:
         return pack_2bit(indices)
     elif bits == 3:
         return pack_3bit(indices)
     elif bits == 4:
         return pack_4bit(indices)
     else:
-        raise ValueError(f"Unsupported bit-width: {bits}. Use 2, 3, or 4.")
+        raise ValueError(f"Unsupported bit-width: {bits}. Use 1, 2, 3, or 4.")
 
 
 def unpack_indices(packed: mx.array, bits: int, d: int) -> mx.array:
     """Unpack indices at the given bit-width."""
-    if bits == 2:
+    if bits == 1:
+        return unpack_1bit(packed, d)
+    elif bits == 2:
         return unpack_2bit(packed, d)
     elif bits == 3:
         return unpack_3bit(packed, d)
     elif bits == 4:
         return unpack_4bit(packed, d)
     else:
-        raise ValueError(f"Unsupported bit-width: {bits}. Use 2, 3, or 4.")
+        raise ValueError(f"Unsupported bit-width: {bits}. Use 1, 2, 3, or 4.")
