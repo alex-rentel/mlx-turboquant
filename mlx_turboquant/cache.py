@@ -123,12 +123,15 @@ class TurboQuantKVCache:
         """Quantize KV tensor: (B, H, T, D) -> (packed_indices, norms)."""
         B, H, T, D = tensor.shape
 
-        # Compute norms
-        norms = mx.linalg.norm(tensor, axis=-1)  # (B, H, T)
+        # Cast to float32 for norm computation (float16 overflows on large vectors)
+        tensor_f32 = tensor.astype(mx.float32)
+
+        # Compute norms in float32
+        norms = mx.linalg.norm(tensor_f32, axis=-1)  # (B, H, T)
         safe_norms = mx.maximum(norms, mx.array(1e-10))
 
         # Normalize
-        normalized = tensor / safe_norms[..., None]  # (B, H, T, D)
+        normalized = tensor_f32 / safe_norms[..., None]  # (B, H, T, D)
 
         # Rotate: need to reshape for matmul
         flat = normalized.reshape(-1, D)  # (B*H*T, D)
@@ -141,7 +144,9 @@ class TurboQuantKVCache:
         packed = pack_indices(indices, bits)  # (B*H*T, packed_dim)
         packed = packed.reshape(B, H, T, -1)
 
-        return packed, norms.astype(mx.float16)
+        # Store norms as float32 (float16 overflows for models like Qwen
+        # with key norms > 65504; cost: 4 bytes vs 2 bytes per token per head)
+        return packed, norms
 
     def _dequantize_kv(self, packed: mx.array, norms: mx.array,
                        centroids: mx.array, bits: int) -> mx.array:

@@ -74,6 +74,47 @@ def _get_model_config(model: nn.Module) -> dict:
                      "Please specify head_dim and num_kv_heads manually.")
 
 
+def detect_outlier_layers(model: nn.Module, threshold: float = 3.0) -> list[int]:
+    """Detect layers with extreme key norms that should stay in FP16.
+
+    Runs a short forward pass and measures key norm statistics per layer.
+    Layers where max key norm exceeds threshold * median are marked as outliers.
+    """
+    import mlx.core as mx
+    from mlx_lm.models.cache import KVCache
+    import numpy as np
+
+    inner = getattr(model, "model", model)
+    layers = getattr(inner, "layers", [])
+    num_layers = len(layers)
+
+    # Run a short forward pass with standard cache
+    cache = [KVCache() for _ in range(num_layers)]
+    dummy = mx.array([[1, 2, 3, 4, 5]])  # Short dummy input
+    logits = model(dummy, cache=cache)
+    mx.eval(logits)
+
+    # Measure max key norms per layer
+    max_norms = []
+    for c in cache:
+        if c.keys is not None:
+            k = c.keys.astype(mx.float32)
+            norms = mx.linalg.norm(k, axis=-1)
+            max_norms.append(mx.max(norms).item())
+        else:
+            max_norms.append(0.0)
+
+    max_norms = np.array(max_norms)
+    median_norm = np.median(max_norms[max_norms > 0])
+
+    outliers = []
+    for i, n in enumerate(max_norms):
+        if n > threshold * median_norm:
+            outliers.append(i)
+
+    return outliers
+
+
 def apply_turboquant(
     model: nn.Module,
     key_bits: int = 4,
@@ -83,6 +124,8 @@ def apply_turboquant(
     num_kv_heads: Optional[int] = None,
     num_layers: Optional[int] = None,
     rotation_seed: int = 42,
+    skip_layers: Optional[list[int]] = None,
+    auto_detect_outliers: bool = True,
 ) -> nn.Module:
     """Apply TurboQuant KV cache compression to an mlx-lm model.
 
@@ -98,6 +141,8 @@ def apply_turboquant(
         num_kv_heads: Override number of KV heads (auto-detected if None)
         num_layers: Override number of layers (auto-detected if None)
         rotation_seed: Seed for the rotation matrix
+        skip_layers: Layer indices to keep in FP16 (no compression)
+        auto_detect_outliers: Auto-detect outlier layers (default True)
 
     Returns:
         The same model (modified in-place)
@@ -107,18 +152,32 @@ def apply_turboquant(
     nkv = num_kv_heads or config["num_kv_heads"]
     nl = num_layers or config["num_layers"]
 
+    # Determine which layers to skip
+    layers_to_skip = set(skip_layers or [])
+    if auto_detect_outliers and not skip_layers:
+        try:
+            outliers = detect_outlier_layers(model)
+            layers_to_skip = set(outliers)
+        except Exception:
+            pass  # If detection fails, compress all layers
+
+    from mlx_lm.models.cache import KVCache
+
     def make_cache():
-        return [
-            TurboQuantKVCache(
-                head_dim=hd,
-                num_kv_heads=nkv,
-                key_bits=key_bits,
-                value_bits=value_bits,
-                residual_window=residual_window,
-                rotation_seed=rotation_seed,
-            )
-            for _ in range(nl)
-        ]
+        caches = []
+        for i in range(nl):
+            if i in layers_to_skip:
+                caches.append(KVCache())  # FP16 for outlier layers
+            else:
+                caches.append(TurboQuantKVCache(
+                    head_dim=hd,
+                    num_kv_heads=nkv,
+                    key_bits=key_bits,
+                    value_bits=value_bits,
+                    residual_window=residual_window,
+                    rotation_seed=rotation_seed,
+                ))
+        return caches
 
     # Monkey-patch
     model.make_cache = make_cache

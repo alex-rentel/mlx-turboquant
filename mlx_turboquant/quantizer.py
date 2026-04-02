@@ -62,12 +62,13 @@ class TurboQuantMSE:
         Returns:
             QuantizedTensor with packed indices and norms
         """
-        # 1. Compute and store norms
-        norms = mx.linalg.norm(x, axis=-1)  # (...)
+        # 1. Compute and store norms (float32 to avoid overflow)
+        x_f32 = x.astype(mx.float32) if x.dtype != mx.float32 else x
+        norms = mx.linalg.norm(x_f32, axis=-1)  # (...)
 
         # 2. Normalize to unit sphere (avoid division by zero)
         safe_norms = mx.maximum(norms, mx.array(1e-10))
-        x_norm = x / safe_norms[..., None]
+        x_norm = x_f32 / safe_norms[..., None]
 
         # 3. Rotate
         y = rotate(x_norm, self.rotation)  # (..., d)
@@ -80,7 +81,7 @@ class TurboQuantMSE:
 
         return QuantizedTensor(
             packed_indices=packed,
-            norms=norms.astype(mx.float16),
+            norms=norms,
             bits=self.bits,
             d=self.d,
         )
@@ -104,7 +105,8 @@ class TurboQuantMSE:
         x_hat = inverse_rotate(y_hat, self.rotation)  # (..., d)
 
         # 4. Rescale by norms
-        x_hat = x_hat * qt.norms.astype(mx.float32)[..., None]
+        norms = qt.norms.astype(mx.float32) if qt.norms.dtype != mx.float32 else qt.norms
+        x_hat = x_hat * norms[..., None]
 
         return x_hat
 

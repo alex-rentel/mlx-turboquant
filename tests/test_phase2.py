@@ -260,15 +260,20 @@ class TestModelPatching:
 
         cache = model.make_cache()
         assert len(cache) == model._turboquant_config["num_layers"]
-        assert isinstance(cache[0], TurboQuantKVCache)
+        # At least some layers should use TurboQuantKVCache
+        # (outlier layers stay as KVCache)
+        tq_count = sum(1 for c in cache if isinstance(c, TurboQuantKVCache))
+        assert tq_count > 0, "No TurboQuantKVCache layers found"
 
     def test_enable_turboquant(self, model_and_tokenizer):
         model, _ = model_and_tokenizer
         enable_turboquant(model, bits=4)
         cache = model.make_cache()
-        assert isinstance(cache[0], TurboQuantKVCache)
-        assert cache[0].key_bits == 4
-        assert cache[0].value_bits == 4
+        # Find a TurboQuant layer (skip outlier layers)
+        tq_layers = [c for c in cache if isinstance(c, TurboQuantKVCache)]
+        assert len(tq_layers) > 0
+        assert tq_layers[0].key_bits == 4
+        assert tq_layers[0].value_bits == 4
 
     def test_generation_with_turboquant(self, model_and_tokenizer):
         """Generate text with TurboQuant cache -- should produce coherent output."""

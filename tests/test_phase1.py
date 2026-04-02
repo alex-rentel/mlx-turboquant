@@ -354,7 +354,7 @@ class TestTurboQuantMSE:
         qt = tq.quantize(x)
         assert qt.bits == 4
         assert qt.d == 128
-        assert qt.norms.dtype == mx.float16
+        assert qt.norms.dtype == mx.float32
         assert qt.qjl_signs is None
 
 
