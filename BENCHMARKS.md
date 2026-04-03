@@ -1,61 +1,64 @@
 # Benchmarks
 
-All benchmarks run on M1 Max 64GB with `mlx-community/Qwen2.5-7B-Instruct-4bit`.
+All benchmarks on Apple M1 Max 64GB, 2026-04-02.
 
-## Quality (Cosine Similarity vs FP16 Baseline)
+## Quality (cosine similarity vs FP16 baseline)
 
-182-token prompt, outlier layers (0, 1, 3, 27) kept in FP16.
+~500-token prompt, residual_window=64. Compression active on ~430+ tokens.
 
-| Config | Cosine Sim | Top-1 Match | Top-10 Overlap |
-|--------|-----------|-------------|----------------|
-| FP16 baseline | 1.000 | Yes | 100% |
-| K4/V4 | 0.951 | No | 70% |
-| K4/V2 | 0.941 | No | 70% |
-| K3/V3 | 0.876 | No | 60% |
-| K3/V2 | 0.887 | No | 70% |
-| K2/V2 | 0.768 | No | 70% |
+| Model | head_dim | K4/V4 | K4/V2 | K3/V2 |
+|-------|----------|-------|-------|-------|
+| Qwen3-1.7B-4bit | 128 | 0.9914 | 0.9853 | 0.9687 |
+| Qwen3-8B-4bit | 128 | 0.9994 | 0.9976 | 0.9872 |
+| Gemma3-1B-it-4bit | 256 | 0.9953 | 0.9802 | 0.9619 |
+| Gemma3-4B-it-4bit | 256 | 0.9925 | 0.9848 | 0.9753 |
 
-**Notes:**
-- Cosine similarity measures logit vector similarity at the last token position
-- Outlier layer auto-detection is critical for Qwen models (layers with key norms >3x median are kept in FP16)
-- 4-bit provides reasonable quality; 2-bit is lossy but usable for long-context scenarios
+**Observations:**
+- Qwen3-8B at K4/V4 achieves 0.9994 cosine sim with 5/5 top-5 overlap
+- Larger models (8B > 1.7B) are more robust to compression
+- K4/V2 (asymmetric) provides good quality with better compression than K4/V4
 
-## Memory Compression
+## Memory (2K context, K4/V2, residual_window=128)
 
-Qwen2.5-7B: 28 layers, 4 KV heads, head_dim=128. Residual window: 128 tokens.
+| Model | Baseline (FP16) | TurboQuant | Ratio |
+|-------|-----------------|------------|-------|
+| Qwen3-8B-4bit | 302.0 MB | 100.5 MB | 3.0x |
+| Gemma3-4B-it-4bit | 285.2 MB | 101.5 MB | 2.8x |
 
-| Context | FP16 | TQ K4/V4 | TQ K4/V2 | TQ K3/V2 | Best Ratio |
-|---------|------|----------|----------|----------|------------|
-| 512 | 29.4 MB | 20.5 MB | 19.2 MB | 18.5 MB | 1.6x |
-| 1024 | 58.7 MB | 28.3 MB | 25.1 MB | 23.5 MB | 2.5x |
-| 2048 | 117.4 MB | 43.9 MB | 37.0 MB | 33.6 MB | 3.5x |
-| 4096 | 234.9 MB | 75.1 MB | 60.9 MB | 53.8 MB | 4.4x |
+## Speed (2K context, K4/V2, decode 50 tokens)
 
-**Notes:**
-- Compression ratio improves with context length (fixed overhead from residual window + outlier layers)
-- At 4K+ context, K3/V2 achieves 4.4x compression
-- Theoretical maximum at infinite context: ~5x for K4/V2, ~8x for K3/V2
+| Model | Baseline | TurboQuant | Overhead |
+|-------|----------|------------|----------|
+| Qwen3-8B-4bit | 38.1 tok/s | 16.5 tok/s | 57% |
+| Gemma3-4B-it-4bit | 58.1 tok/s | 18.1 tok/s | 69% |
 
-## Speed (Tokens/Second)
+The overhead comes from software dequantization (rotation matrix multiply + centroid lookup per decode step). A fused Metal kernel would reduce this significantly.
 
-256-token prefill, 50-token decode.
+## Generation Samples (2K context, diverse prompt)
 
-| Config | Prefill (tok/s) | Decode (tok/s) | Decode Overhead |
-|--------|----------------|----------------|-----------------|
-| FP16 baseline | 404 | 57.2 | -- |
-| TQ K4/V4 w128 | 312 | 30.3 | +47% |
-| TQ K4/V2 w128 | 338 | 30.9 | +46% |
-| TQ K4/V2 w32 | 332 | 30.6 | +47% |
+**Qwen3-8B K4/V2 vs baseline:** Output identical for first 50 tokens.
 
-**Notes:**
-- Decode overhead is ~47% due to dequantization (rotation matrix multiply + centroid lookup)
-- This is a CPU-side Python implementation; a fused Metal kernel would reduce overhead significantly
-- The value proposition is memory savings (longer contexts), not speed
-- At very long contexts where FP16 would OOM, TurboQuant enables inference that wouldn't otherwise be possible
+**Gemma3-4B:** Coherent up to ~1K context. Degrades at 2K due to error compounding through 34 layers with only 1 KV head group. For Gemma3, use residual_window >= context_length/2 or K4/V4.
 
-## Key Findings
+## Known Limitations
 
-1. **Outlier layer detection is essential** for Qwen models — without it, cosine sim drops from 0.95 to 0.63
-2. **Asymmetric K/V allocation works**: K4/V2 is nearly as good as K4/V4 with better compression
-3. **Residual window size** has minimal impact on quality for short prompts (tested w32 vs w128)
-4. **Compression ratio scales** with context length — the main use case is fitting longer contexts in memory
+1. **Decode overhead (57-69%):** Software dequantization dominates. This is a Python/MLX implementation without custom Metal kernels. The value proposition is memory savings for long context, not speed.
+
+2. **Gemma3 sensitivity at long context:** Gemma3's architecture (1-4 KV heads, head_dim=256) is more sensitive to KV compression error compounding than Qwen3 (8 KV heads, head_dim=128). With fewer KV heads, each head carries more information per position.
+
+3. **Outlier layers:** Auto-detected and kept in FP16 (Qwen3-1.7B: 4 layers, Qwen3-8B: varies, Gemma3: 1 layer).
+
+## Pure Quantizer Quality
+
+The mathematical core achieves excellent per-vector reconstruction (no model involvement):
+
+| dim | bits | Mean cos_sim | Median cos_sim |
+|-----|------|-------------|----------------|
+| 128 | 4 | 0.9954 | 0.9956 |
+| 128 | 3 | 0.9831 | 0.9837 |
+| 128 | 2 | 0.9406 | 0.9413 |
+| 256 | 4 | 0.9953 | 0.9955 |
+| 256 | 3 | 0.9828 | 0.9832 |
+| 256 | 2 | 0.9401 | 0.9404 |
+
+The logit-level quality gap comes from error compounding through transformer layers, not quantizer imprecision.
