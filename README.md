@@ -1,33 +1,8 @@
 # mlx-turboquant
 
-**Near-optimal KV cache quantization for Apple Silicon. Up to 4.4x memory savings.**
-
-MLX-native implementation of [TurboQuant](https://arxiv.org/abs/2504.19874) (Google Research, ICLR 2026). Compress KV cache to 2-4 bits during inference -- run longer contexts with less RAM on your Mac.
+Near-optimal KV cache quantization for Apple Silicon. Faithful implementation of [TurboQuant](https://arxiv.org/abs/2504.19874) (arXiv:2504.19874, ICLR 2026).
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-
-## How it works
-
-```
-Input KV vector (FP16, 128 dims)
-    |
-    v
-1. Random rotation (QR decomposition)
-   -> Spreads energy evenly across dimensions
-   -> Coordinates follow Beta distribution
-    |
-    v
-2. Optimal scalar quantization (Lloyd-Max)
-   -> Each coordinate quantized to 2-4 bits
-   -> Codebook precomputed from Beta distribution
-    |
-    v
-3. Bit-packed storage + float32 norm
-   -> 4-bit: 66 bytes vs 256 bytes FP16 (3.9x)
-   -> 2-bit: 36 bytes vs 256 bytes FP16 (7.1x)
-```
-
-**Data-oblivious:** No training data, calibration, or fine-tuning needed. Works on any model instantly.
 
 ## Quick Start
 
@@ -35,112 +10,94 @@ Input KV vector (FP16, 128 dims)
 pip install mlx-turboquant
 ```
 
-### Library API
+```python
+from mlx_lm import load
+from mlx_turboquant import apply_turboquant
+
+model, tokenizer = load("mlx-community/Qwen3-8B-4bit")
+apply_turboquant(model, key_bits=4, value_bits=2)
+cache = model.make_cache()
+# Use cache normally with model(inputs, cache=cache)
+```
+
+## Benchmarks (M1 Max 64GB, April 2026)
+
+### Quality (cosine similarity vs FP16 baseline, ~500-token context)
+
+| Model | head_dim | K4/V4 | K4/V2 | K3/V2 |
+|-------|----------|-------|-------|-------|
+| Qwen3-1.7B | 128 | 0.9914 | 0.9853 | 0.9687 |
+| Qwen3-8B | 128 | **0.9994** | 0.9976 | 0.9872 |
+| Gemma3-1B | 256 | 0.9953 | 0.9802 | 0.9619 |
+| Gemma3-4B | 256 | 0.9925 | 0.9848 | 0.9753 |
+
+### Memory (2K context, K4/V2)
+
+| Model | Baseline | TurboQuant | Compression |
+|-------|----------|------------|-------------|
+| Qwen3-8B | 302 MB | 101 MB | **3.0x** |
+| Gemma3-4B | 285 MB | 102 MB | **2.8x** |
+
+### Speed (2K context, decode)
+
+| Model | Baseline | TurboQuant | Overhead |
+|-------|----------|------------|----------|
+| Qwen3-8B | 38.1 tok/s | 16.5 tok/s | 57% |
+| Gemma3-4B | 58.1 tok/s | 18.1 tok/s | 69% |
+
+Speed overhead is from software dequantization (dense rotation matrix multiply per token). A fused Metal kernel would reduce this.
+
+## How It Works
+
+TurboQuant compresses each KV vector independently in three steps. First, a fixed random orthogonal matrix (QR decomposition) rotates the vector so that its coordinates become approximately independent and identically distributed. This rotation is the theoretical foundation: it transforms the vector quantization problem into a simpler per-coordinate scalar quantization problem.
+
+Second, each rotated coordinate is quantized using a precomputed Lloyd-Max codebook optimized for the post-rotation distribution (Beta((d-1)/2, (d-1)/2), which converges to Gaussian in high dimensions). The codebook is computed once per (dimension, bit-width) pair and reused for all tokens. Only the quantization indices and the original vector's L2 norm are stored.
+
+To decode, the indices are mapped back to centroids, the inverse rotation is applied, and the result is rescaled by the stored norm. The per-vector MSE is within 2.7x of the Shannon information-theoretic lower bound. At 4-bit, the pure quantizer achieves 0.9955 median cosine similarity per vector.
+
+## Configuration
 
 ```python
-from mlx_turboquant import apply_turboquant
-from mlx_lm import load, generate
-
-model, tokenizer = load("mlx-community/Qwen2.5-7B-Instruct-4bit")
-
-# Enable TurboQuant: 4-bit keys, 2-bit values
-apply_turboquant(model, key_bits=4, value_bits=2)
-
-# Generate with compressed KV cache -- same API, less memory
-import mlx.core as mx
-cache = model.make_cache()
-inputs = mx.array(tokenizer.encode("Hello!"))[None]
-logits = model(inputs, cache=cache)
+apply_turboquant(
+    model,
+    key_bits=4,          # 2, 3, or 4 bits for keys
+    value_bits=2,        # 2, 3, or 4 bits for values
+    residual_window=128, # recent tokens stay in FP16
+    auto_detect_outliers=True,  # skip layers with extreme key norms
+    skip_layers=[0, 27], # manually specify layers to keep in FP16
+)
 ```
 
-### CLI
+- **Asymmetric K/V:** Keys need more precision than values. K4/V2 is a good default.
+- **Residual window:** The last N tokens stay uncompressed. Larger = better quality, less compression.
+- **Outlier detection:** Models like Qwen3 have layers with extreme key norms (>3x median). These are auto-detected and kept in FP16.
+- **Few-KV-head safety:** Models with 1-2 KV heads (Gemma3-1B) auto-upgrade to K4/V3 minimum.
 
-```bash
-# Generate text
-mlx-turboquant generate \
-  --model mlx-community/Qwen2.5-7B-Instruct-4bit \
-  --key-bits 4 --value-bits 2 \
-  --prompt "Explain quantum computing"
+## Supported Models
 
-# Run benchmarks
-mlx-turboquant benchmark \
-  --model mlx-community/Qwen2.5-7B-Instruct-4bit \
-  --benchmarks quality memory speed
+Any model loaded via `mlx_lm.load()`:
+
+- **Qwen3** (1.7B, 8B) -- head_dim=128, tested extensively
+- **Gemma3** (1B, 4B) -- head_dim=256, works well up to ~1K context
+- **Llama, Mistral, Phi** -- standard head_dim=128, expected to work (GQA supported)
+
+## Limitations
+
+1. **Decode overhead (45-69%):** No custom Metal kernels yet. The dense rotation matrix multiply dominates decode time. Memory savings scale with context but speed does not improve.
+2. **Error compounding:** Small per-vector errors (~0.5%) compound through transformer layers. Larger models and more KV heads are more robust. Gemma3 with 1 KV head degrades at >1K context.
+3. **Memory savings scale with context:** At short contexts (<residual_window), no compression occurs. The benefit grows with context length.
+
+## Citation
+
+```bibtex
+@inproceedings{zandieh2026turboquant,
+  title={TurboQuant: Online Vector Quantization with Near-optimal Distortion Rate},
+  author={Zandieh, Amir and Daliri, Majid and Hadian, Ali and Mirrokni, Vahab},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2026}
+}
 ```
-
-## Benchmarks
-
-All benchmarks on M1 Max 64GB with `Qwen2.5-7B-Instruct-4bit`.
-
-### Memory Compression
-
-| Context | FP16 | TQ K4/V2 | TQ K3/V2 | Best Ratio |
-|---------|------|----------|----------|------------|
-| 512 | 29.4 MB | 19.2 MB | 18.5 MB | 1.6x |
-| 1024 | 58.7 MB | 25.1 MB | 23.5 MB | 2.5x |
-| 2048 | 117.4 MB | 37.0 MB | 33.6 MB | 3.5x |
-| 4096 | 234.9 MB | 60.9 MB | 53.8 MB | 4.4x |
-
-### Quality (vs FP16 baseline)
-
-| Config | Cosine Sim | Top-10 Overlap |
-|--------|-----------|----------------|
-| K4/V4 | 0.951 | 70% |
-| K4/V2 | 0.941 | 70% |
-| K3/V3 | 0.876 | 60% |
-| K2/V2 | 0.768 | 70% |
-
-### Speed
-
-| Config | Decode (tok/s) | Overhead |
-|--------|----------------|----------|
-| FP16 baseline | 57.2 | -- |
-| TQ K4/V2 | 30.9 | +46% |
-
-The overhead comes from software dequantization (rotation matrix multiply). A fused Metal kernel would reduce this significantly.
-
-## Features
-
-- **Asymmetric K/V bits:** Keys need more precision than values (K4/V2 is the sweet spot)
-- **Residual window:** Recent tokens stay in FP16 for maximum quality
-- **Outlier layer detection:** Auto-detects layers with extreme key norms (Qwen layer 0) and keeps them in FP16
-- **Model agnostic:** Works with Llama, Qwen, Mistral, Gemma via mlx-lm
-- **Both algorithms:** TurboQuant_mse (default, recommended) and TurboQuant_prod (QJL, opt-in)
-
-## Architecture
-
-```
-mlx_turboquant/
-  __init__.py         # apply_turboquant(), enable_turboquant()
-  codebook.py         # Lloyd-Max optimal scalar quantizer
-  rotation.py         # Random orthogonal rotation (QR decomposition)
-  quantizer.py        # TurboQuantMSE, TurboQuantProd
-  qjl.py              # Quantized Johnson-Lindenstrauss transform
-  packing.py          # 1/2/3/4-bit packing into uint8
-  cache.py            # TurboQuantKVCache (drop-in for mlx-lm)
-  patch.py            # Model patching + outlier layer detection
-  cli.py              # CLI entry points
-  codebooks/          # Precomputed Lloyd-Max codebooks (.npz)
-benchmarks/
-  bench_quality.py    # Cosine similarity, top-K accuracy
-  bench_memory.py     # Cache memory measurement
-  bench_speed.py      # Tokens/second comparison
-  needle_haystack.py  # Needle-in-a-haystack retrieval test
-tests/                # 137 tests
-```
-
-## Credits
-
-**Original paper:** Zandieh, Daliri, Hadian, Mirrokni -- *"TurboQuant: Online Vector Quantization with Near-optimal Distortion Rate"* (Google Research / Google DeepMind / NYU, ICLR 2026). [arXiv:2504.19874](https://arxiv.org/abs/2504.19874)
-
-**Reference implementations:**
-- [vivekvar-dl/turboquant](https://github.com/vivekvar-dl/turboquant) -- PyTorch reference
-- [sharpner/turboquant-mlx](https://github.com/sharpner/turboquant-mlx) -- MLX port
-- [tonbistudio/turboquant-pytorch](https://github.com/tonbistudio/turboquant-pytorch) -- V3 with community findings
-- [llama.cpp discussion #20969](https://github.com/ggml-org/llama.cpp/discussions/20969) -- Implementation insights
-
-**MLX framework:** [Apple ML Explore](https://github.com/ml-explore/mlx)
 
 ## License
 
-MIT
+MIT -- crediting original authors (Zandieh, Daliri, Hadian, Mirrokni).
