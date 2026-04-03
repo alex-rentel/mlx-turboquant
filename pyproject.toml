@@ -53,3 +53,4 @@ mlx_turboquant = ["codebooks/*.npz"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["slow: marks tests that download and load real models"]
