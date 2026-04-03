@@ -158,24 +158,35 @@ class TurboQuantKVCache:
 
     def _dequantize_kv(self, packed: mx.array, norms: mx.array,
                        centroids: mx.array, bits: int) -> mx.array:
-        """Dequantize: (packed_indices, norms) -> (B, H, T, D)."""
+        """Dequantize: (packed_indices, norms) -> (B, H, T, D).
+
+        Uses fused Metal kernel when available (2/3/4-bit, power-of-2 dim).
+        Falls back to Python path otherwise.
+        """
         B, H, T, _ = packed.shape
         D = self.head_dim
 
-        # Unpack
+        # Try Metal kernel path (fused unpack + centroid + inverse rotation + scale)
+        if bits in (2, 3, 4) and T > 0:
+            try:
+                from .kernels import metal_dequantize
+                flat_packed = packed.reshape(-1, packed.shape[-1])
+                flat_norms = norms.reshape(-1).astype(mx.float32)
+                x_hat = metal_dequantize(
+                    flat_packed, flat_norms, centroids,
+                    self.rotation, bits, D,
+                )
+                return x_hat.reshape(B, H, T, D)
+            except Exception:
+                pass  # Fall through to Python path
+
+        # Python fallback
         flat_packed = packed.reshape(-1, packed.shape[-1])
-        indices = unpack_indices(flat_packed, bits, D)  # (B*H*T, D)
-
-        # Look up centroids
-        y_hat = dequantize_scalar(indices, centroids)  # (B*H*T, D)
-
-        # Inverse rotate
-        x_hat = inverse_rotate(y_hat, self.rotation)  # (B*H*T, D)
-
-        # Rescale
+        indices = unpack_indices(flat_packed, bits, D)
+        y_hat = dequantize_scalar(indices, centroids)
+        x_hat = inverse_rotate(y_hat, self.rotation)
         flat_norms = norms.reshape(-1).astype(mx.float32)
         x_hat = x_hat * flat_norms[:, None]
-
         return x_hat.reshape(B, H, T, D)
 
     def _compress_old_tokens(self):
