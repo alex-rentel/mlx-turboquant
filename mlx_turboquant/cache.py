@@ -311,12 +311,19 @@ class TurboQuantKVCache:
                 )
 
     def _compress_old_tokens(self):
-        """Move tokens outside the residual window to compressed storage."""
+        """Move tokens outside the residual window to compressed storage.
+
+        Uses batch compression: waits until FP16 buffer reaches 2x the
+        residual window, then compresses the excess in one batch. This
+        halves compression frequency and amortizes per-call overhead.
+        """
         if self.keys is None:
             return
 
         fp16_len = self.keys.shape[2]
-        if fp16_len <= self.residual_window:
+        # Batch: only compress when we've accumulated a full window of excess
+        compress_threshold = self.residual_window * 2
+        if fp16_len <= compress_threshold:
             return
 
         n_compress = fp16_len - self.residual_window
