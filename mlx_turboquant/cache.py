@@ -88,6 +88,7 @@ class TurboQuantKVCache:
             self._compressed_values,
             self._compressed_value_norms,
         ) = v
+        self._decompressed_valid = False
 
     @property
     def meta_state(self):
