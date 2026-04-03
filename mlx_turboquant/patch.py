@@ -165,6 +165,23 @@ def apply_turboquant(
     nkv = num_kv_heads or config["num_kv_heads"]
     nl = num_layers or config["num_layers"]
 
+    # Auto-adjust bits for models with few KV heads (more sensitive to compression)
+    import warnings
+    if nkv <= 2 and key_bits < 4:
+        warnings.warn(
+            f"Model has only {nkv} KV heads. "
+            f"Upgrading key_bits from {key_bits} to 4 for stability.",
+            UserWarning, stacklevel=2,
+        )
+        key_bits = 4
+    if nkv <= 2 and value_bits < 3:
+        warnings.warn(
+            f"Model has only {nkv} KV heads. "
+            f"Upgrading value_bits from {value_bits} to 3 for stability.",
+            UserWarning, stacklevel=2,
+        )
+        value_bits = 3
+
     # Determine which layers to skip
     layers_to_skip = set(skip_layers or [])
     if auto_detect_outliers and not skip_layers:
