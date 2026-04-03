@@ -13,10 +13,7 @@ All benchmarks on Apple M1 Max 64GB, 2026-04-02.
 | Gemma3-1B-it-4bit | 256 | 0.9953 | 0.9802 | 0.9619 |
 | Gemma3-4B-it-4bit | 256 | 0.9925 | 0.9848 | 0.9753 |
 
-**Observations:**
-- Qwen3-8B at K4/V4 achieves 0.9994 cosine sim with 5/5 top-5 overlap
-- Larger models (8B > 1.7B) are more robust to compression
-- K4/V2 (asymmetric) provides good quality with better compression than K4/V4
+Quality is identical between Python (v0.2.0) and Metal (v0.3.0) paths. The Metal kernels are bit-accurate (max diff < 2e-6).
 
 ## Memory (2K context, K4/V2, residual_window=128)
 
@@ -25,32 +22,35 @@ All benchmarks on Apple M1 Max 64GB, 2026-04-02.
 | Qwen3-8B-4bit | 302.0 MB | 100.5 MB | 3.0x |
 | Gemma3-4B-it-4bit | 285.2 MB | 101.5 MB | 2.8x |
 
-## Speed (2K context, K4/V2, decode 50 tokens)
+## Speed (K4/V2, decode 50 tokens)
 
-| Model | Baseline | TurboQuant | Overhead |
-|-------|----------|------------|----------|
-| Qwen3-8B-4bit | 38.1 tok/s | 16.5 tok/s | 57% |
-| Gemma3-4B-it-4bit | 58.1 tok/s | 18.1 tok/s | 69% |
+### v0.3.0 (Fused Metal kernels)
 
-The overhead comes from software dequantization (rotation matrix multiply + centroid lookup per decode step). A fused Metal kernel would reduce this significantly.
+| Model | Context | Baseline | TurboQuant | Overhead |
+|-------|---------|----------|------------|----------|
+| Qwen3-1.7B | 512 | 35.5 tok/s | 21.6 tok/s | 39% |
+| Qwen3-8B | 512 | 19.1 tok/s | 13.8 tok/s | 28% |
+| Qwen3-8B | 2K | 35.2 tok/s | 23.6 tok/s | 33% |
 
-## Generation Samples (2K context, diverse prompt)
+### Comparison: v0.2.0 (Python) vs v0.3.0 (Metal)
 
-**Qwen3-8B K4/V2 vs baseline:** Output identical for first 50 tokens.
+| Model | Context | v0.2.0 | v0.3.0 | Improvement |
+|-------|---------|--------|--------|-------------|
+| Qwen3-1.7B | 512 | 45% overhead | 39% overhead | -6pt |
+| Qwen3-8B | 512 | ~45% overhead | 28% overhead | -17pt |
+| Qwen3-8B | 2K | 57% overhead | 33% overhead | -24pt |
 
-**Gemma3-4B:** Coherent up to ~1K context. Degrades at 2K due to error compounding through 34 layers with only 1 KV head group. For Gemma3, use residual_window >= context_length/2 or K4/V4.
+The fused Metal dequantize kernel eliminates 3 intermediate array allocations per call (unpack, centroid lookup, inverse rotation), reducing overhead by up to 24 percentage points.
 
 ## Known Limitations
 
-1. **Decode overhead (57-69%):** Software dequantization dominates. This is a Python/MLX implementation without custom Metal kernels. The value proposition is memory savings for long context, not speed.
+1. **Remaining overhead (28-39%):** Dominated by `mx.concatenate` on every decode step (assembling decompressed + FP16 window). A fused attention-from-compressed kernel would eliminate this.
 
-2. **Gemma3 sensitivity at long context:** Gemma3's architecture (1-4 KV heads, head_dim=256) is more sensitive to KV compression error compounding than Qwen3 (8 KV heads, head_dim=128). With fewer KV heads, each head carries more information per position.
+2. **Gemma3 sensitivity at long context:** Gemma3 (1-4 KV heads, head_dim=256) is more sensitive to compression error compounding than Qwen3 (8 KV heads, head_dim=128). For Gemma3, use larger residual window or K4/V4.
 
-3. **Outlier layers:** Auto-detected and kept in FP16 (Qwen3-1.7B: 4 layers, Qwen3-8B: varies, Gemma3: 1 layer).
+3. **Outlier layers:** Auto-detected and kept in FP16.
 
 ## Pure Quantizer Quality
-
-The mathematical core achieves excellent per-vector reconstruction (no model involvement):
 
 | dim | bits | Mean cos_sim | Median cos_sim |
 |-----|------|-------------|----------------|
@@ -60,5 +60,3 @@ The mathematical core achieves excellent per-vector reconstruction (no model inv
 | 256 | 4 | 0.9953 | 0.9955 |
 | 256 | 3 | 0.9828 | 0.9832 |
 | 256 | 2 | 0.9401 | 0.9404 |
-
-The logit-level quality gap comes from error compounding through transformer layers, not quantizer imprecision.
