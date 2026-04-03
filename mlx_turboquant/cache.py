@@ -41,7 +41,8 @@ class TurboQuantKVCache:
         self.value_bits = value_bits
         self.residual_window = residual_window
 
-        # Rotation matrix (shared across all heads)
+        # Rotation matrix (QR decomposition — WHT tested but degraded
+        # Gemma quality by >0.5%, see commit history)
         self.rotation = get_rotation_matrix(head_dim, rotation_seed)
 
         # Codebooks
