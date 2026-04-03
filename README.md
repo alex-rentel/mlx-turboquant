@@ -46,15 +46,14 @@ Tested on 4 real models across 2 architecture families (Qwen3: head_dim=128, Gem
 | Qwen3-8B | 302 MB | 101 MB | **3.0x** |
 | Gemma3-4B | 285 MB | 102 MB | **2.8x** |
 
-### Speed (decode, fused Metal kernels)
+### Speed (decode, K4/V2)
 
 | Model | Context | Baseline | TurboQuant | Overhead |
 |-------|---------|----------|------------|----------|
-| Qwen3-1.7B | 512 | 35.5 tok/s | 21.6 tok/s | 39% |
-| Qwen3-8B | 512 | 19.1 tok/s | 13.8 tok/s | 28% |
-| Qwen3-8B | 2K | 35.2 tok/s | 23.6 tok/s | 33% |
+| Qwen3-1.7B | 512 | 35.5 tok/s | 29.8 tok/s | 16% |
+| Qwen3-8B | 2K | 41.3 tok/s | 36.7 tok/s | **11%** |
 
-Fused Metal kernels (v0.3.0) reduced overhead from 57% to 28-33%.
+Overhead reduced from 57% (v0.2.0, Python) → 33% (v0.3.0, Metal kernels) → **11%** (v0.5.0, batch compression + pre-allocated window).
 
 ### Needle-in-a-Haystack
 
@@ -137,6 +136,7 @@ mlx_turboquant/
   quantizer.py    # TurboQuantMSE (Algorithm 1) + TurboQuantProd (Algorithm 2)
   qjl.py          # Quantized Johnson-Lindenstrauss transform
   packing.py      # 1/2/3/4-bit index packing into uint8
+  kernels.py      # Fused Metal compute kernels (dequantize, quantize)
   cache.py        # TurboQuantKVCache — drop-in for mlx-lm's KVCache
   patch.py        # Model patching — apply_turboquant() monkey-patch
   cli.py          # Command-line interface
@@ -162,26 +162,31 @@ python benchmarks/bench_speed.py
 
 ## Limitations
 
-1. **Decode speed overhead (28-39%):** Fused Metal kernels handle dequantization, but per-operation dispatch overhead from 70 `mx.concatenate` calls per step remains. A fused attention-from-compressed kernel would eliminate this.
+1. **Decode speed overhead (~11%):** Fused Metal kernels + batch compression + pre-allocated windows reduced overhead from 57% to 11%. The remaining overhead is MLX per-operation dispatch cost (~0.25ms per concatenate). A fused attention-from-compressed kernel would eliminate this entirely.
 2. **Error compounding:** Per-vector reconstruction error (~0.5%) compounds through transformer layers. Models with more KV heads (Qwen3: 8 heads) are more robust than those with fewer (Gemma3-1B: 1 head).
 3. **Context-dependent compression:** At contexts shorter than `residual_window`, no compression occurs. Memory savings grow with context length.
 
 ## Roadmap
 
-### v0.3.0 — Fused Metal Kernels
+### Completed
 
-v0.3.0 shipped fused Metal dequantize kernels (57% -> 33% overhead). The remaining path to near-zero overhead:
+| Version | Feature | Result |
+|---------|---------|--------|
+| v0.2.0 | Real model testing, vectorized quantization | 6 model families validated |
+| v0.3.0 | Fused Metal dequantize kernels | 57% → 33% overhead |
+| v0.4.0 | 3.5-bit fractional, needle-in-haystack, PyPI packaging | 12/12 retrieval at 1K-8K |
+| v0.5.0 | Batch compression + pre-allocated FP16 window | 33% → **11%** overhead |
 
-1. ~~**Fused rotate+dequantize Metal kernel**~~ — Done in v0.3.0. Reduced overhead from 57% to 33%.
-2. **Fused attention-from-compressed kernel:** Compute Q @ K^T directly from packed indices without materializing the full dequantized K tensor. This eliminates 70 concatenate ops per step. Another MLX TurboQuant implementation demonstrated 0.98x native speed with this approach.
-3. **Walsh-Hadamard fast path:** WHT is O(d log d) vs O(d²) for QR. Works for Qwen3 but degrades Gemma3 by 1.6%. Needs dimension-adaptive guard.
+### Next: Fused Attention-from-Compressed Kernel
 
-Target: reduce decode overhead from 33% to under 10%.
+The remaining 11% overhead is MLX dispatch cost from concatenating decompressed + FP16 tensors. The path to sub-5%:
+
+1. **Fused attention-from-compressed kernel:** Compute Q @ K^T directly from packed indices without materializing the full dequantized K tensor. Another MLX TurboQuant implementation demonstrated 0.98x native speed with this approach.
+2. **Walsh-Hadamard fast path:** WHT is O(d log d) vs O(d²) for QR. Works for Qwen3 but degrades Gemma3 by 1.6%. A dimension-adaptive strategy could use WHT where safe.
 
 ### Future
 
-- Needle-in-a-haystack validation at 8K-32K context
-- 3.5-bit fractional quantization (channel-split: half at 3-bit, half at 4-bit)
+- Needle-in-a-haystack validation at 16K-32K context
 - Integration with [eden-fleet](https://github.com/alex-rentel/eden-fleet) for distributed inference with compressed KV cache transfer between nodes
 - Upstream contribution to mlx-lm as an optional KV cache backend
 
