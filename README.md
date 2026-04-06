@@ -201,6 +201,18 @@ mlx-turboquant is part of a local-first AI development ecosystem for Apple Silic
 - [mlx-nanochat](https://github.com/alex-rentel/mlx-nanochat) — Train ChatGPT-class models on Mac (port of Karpathy's nanochat)
 - **mlx-turboquant** — KV cache compression for longer contexts on Apple Silicon
 
+## Community Implementations
+
+The TurboQuant MLX space moved fast after the paper dropped. Notable implementations worth checking out:
+
+- [sharpner/turboquant-mlx](https://github.com/sharpner/turboquant-mlx) — V2 (affine, fast) + V3 (Lloyd-Max, correct) dual-path architecture. Thorough analysis of QJL as correction vs replacement.
+- [arozanov/turboquant-mlx](https://github.com/arozanov/turboquant-mlx) — Fused Metal kernels with parallel threadgroup WHT, layer-adaptive FP16/TurboQuant mixing. Reports 4.6x compression at 98% FP16 speed.
+- [rachittshah/mlx-turboquant](https://github.com/rachittshah/mlx-turboquant) — Clean drop-in KVCache replacement with precomputed Lloyd-Max codebooks for N(0,1).
+- [helgklaizar/turboquant_mlx](https://github.com/helgklaizar/turboquant_mlx) — Asymmetric PolarQuant with attention sink preservation and dynamic chunking. Two-line monkey-patch into mlx_lm.
+- [flovflo/turboquant-mlx-qwen35-kv](https://huggingface.co/flovflo/turboquant-mlx-qwen35-kv) — Qwen 3.5 35B benchmarks showing 26% faster generation and 44% cache reduction.
+
+This repo differentiates by combining fused Metal dequant kernels, asymmetric K/V bit allocation, per-model outlier layer detection, and fractional (3.5-bit) quantization in a single drop-in package — validated across 6 model families with needle-in-haystack testing.
+
 ## Citation
 
 ```bibtex
