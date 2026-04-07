@@ -1,0 +1,369 @@
+{
+  "id": "mlx-community/Qwen3-4B-4bit",
+  "name": "Qwen3-4B",
+  "load_seconds": 0.6912168749986449,
+  "architecture": {
+    "model_class": "Model",
+    "num_layers": 36,
+    "head_dim": 128,
+    "num_kv_heads": 8,
+    "num_attention_heads": 32,
+    "hidden_size": 2560
+  },
+  "configs": {
+    "baseline": {
+      "config": "baseline",
+      "params": {
+        "type": "fp16"
+      },
+      "quality": {
+        "cos_sim": 1.0000000000000002,
+        "top1_match": true,
+        "seq_len": 500
+      },
+      "speed": {
+        "256": {
+          "prompt_len": 256,
+          "decode_tok_s_median": 66.88612824340795,
+          "decode_tok_s_runs": [
+            70.21175956876415,
+            66.88612824340795,
+            65.6959054446403
+          ],
+          "ttft_ms_median": 653.8381670106901,
+          "ttft_ms_runs": [
+            645.4042920086067,
+            653.8381670106901,
+            662.0777920034016
+          ]
+        },
+        "2048": {
+          "prompt_len": 2048,
+          "decode_tok_s_median": 57.98365962941227,
+          "decode_tok_s_runs": [
+            57.98365962941227,
+            58.220997997180376,
+            57.911672585023666
+          ],
+          "ttft_ms_median": 5218.250165999052,
+          "ttft_ms_runs": [
+            5379.451041997527,
+            5218.250165999052,
+            5209.1409169952385
+          ]
+        }
+      },
+      "memory": {
+        "512": {
+          "context_len": 512,
+          "kv_bytes": 75497472,
+          "kv_mb": 72.0,
+          "layer_count": 36
+        },
+        "1024": {
+          "context_len": 1024,
+          "kv_bytes": 150994944,
+          "kv_mb": 144.0,
+          "layer_count": 36
+        },
+        "2048": {
+          "context_len": 2048,
+          "kv_bytes": 301989888,
+          "kv_mb": 288.0,
+          "layer_count": 36
+        },
+        "4096": {
+          "context_len": 4096,
+          "kv_bytes": 603979776,
+          "kv_mb": 576.0,
+          "layer_count": 36
+        }
+      }
+    },
+    "K4/V4": {
+      "config": "K4/V4",
+      "params": {
+        "type": "tq",
+        "key_bits": 4,
+        "value_bits": 4
+      },
+      "quality": {
+        "cos_sim": 0.9897647491393954,
+        "top1_match": true,
+        "seq_len": 500
+      },
+      "speed": {
+        "256": {
+          "prompt_len": 256,
+          "decode_tok_s_median": 57.995057620173554,
+          "decode_tok_s_runs": [
+            58.22035527822372,
+            57.995057620173554,
+            57.63075555693175
+          ],
+          "ttft_ms_median": 669.269334001001,
+          "ttft_ms_runs": [
+            669.269334001001,
+            689.6859999978915,
+            668.2193750020815
+          ]
+        },
+        "2048": {
+          "prompt_len": 2048,
+          "decode_tok_s_median": 46.500076467127634,
+          "decode_tok_s_runs": [
+            47.049052237784736,
+            46.500076467127634,
+            45.614747154345864
+          ],
+          "ttft_ms_median": 3785.5395840015262,
+          "ttft_ms_runs": [
+            3785.5396249942714,
+            3785.5395840015262,
+            3770.903416996589
+          ]
+        }
+      },
+      "memory": {
+        "512": {
+          "context_len": 512,
+          "kv_bytes": 52789248,
+          "kv_mb": 50.34375,
+          "layer_count": 36
+        },
+        "1024": {
+          "context_len": 1024,
+          "kv_bytes": 72843264,
+          "kv_mb": 69.46875,
+          "layer_count": 36
+        },
+        "2048": {
+          "context_len": 2048,
+          "kv_bytes": 112951296,
+          "kv_mb": 107.71875,
+          "layer_count": 36
+        },
+        "4096": {
+          "context_len": 4096,
+          "kv_bytes": 193167360,
+          "kv_mb": 184.21875,
+          "layer_count": 36
+        }
+      }
+    },
+    "K4/V2": {
+      "config": "K4/V2",
+      "params": {
+        "type": "tq",
+        "key_bits": 4,
+        "value_bits": 2
+      },
+      "quality": {
+        "cos_sim": 0.958823626674432,
+        "top1_match": true,
+        "seq_len": 500
+      },
+      "speed": {
+        "256": {
+          "prompt_len": 256,
+          "decode_tok_s_median": 58.1080062572974,
+          "decode_tok_s_runs": [
+            58.1080062572974,
+            57.879194090835604,
+            58.675865293092684
+          ],
+          "ttft_ms_median": 668.1199999875389,
+          "ttft_ms_runs": [
+            668.3525000116788,
+            668.0000000051223,
+            668.1199999875389
+          ]
+        },
+        "2048": {
+          "prompt_len": 2048,
+          "decode_tok_s_median": 47.098730232657275,
+          "decode_tok_s_runs": [
+            48.4638564719986,
+            45.15720640485034,
+            47.098730232657275
+          ],
+          "ttft_ms_median": 3881.6030839952873,
+          "ttft_ms_runs": [
+            3847.6152079965686,
+            3881.6030839952873,
+            4015.72350000788
+          ]
+        }
+      },
+      "memory": {
+        "512": {
+          "context_len": 512,
+          "kv_bytes": 49250304,
+          "kv_mb": 46.96875,
+          "layer_count": 36
+        },
+        "1024": {
+          "context_len": 1024,
+          "kv_bytes": 64585728,
+          "kv_mb": 61.59375,
+          "layer_count": 36
+        },
+        "2048": {
+          "context_len": 2048,
+          "kv_bytes": 95256576,
+          "kv_mb": 90.84375,
+          "layer_count": 36
+        },
+        "4096": {
+          "context_len": 4096,
+          "kv_bytes": 156598272,
+          "kv_mb": 149.34375,
+          "layer_count": 36
+        }
+      }
+    },
+    "K4/V2+sink128": {
+      "config": "K4/V2+sink128",
+      "params": {
+        "type": "tq",
+        "key_bits": 4,
+        "value_bits": 2,
+        "fp16_sink_size": 128
+      },
+      "quality": {
+        "cos_sim": 0.9810699904684062,
+        "top1_match": true,
+        "seq_len": 500
+      },
+      "speed": {
+        "256": {
+          "prompt_len": 256,
+          "decode_tok_s_median": 63.23098053998599,
+          "decode_tok_s_runs": [
+            70.37256826139792,
+            63.23098053998599,
+            62.574386899532236
+          ],
+          "ttft_ms_median": 666.2227079941658,
+          "ttft_ms_runs": [
+            650.6112499919254,
+            666.2227079941658,
+            670.8183750015451
+          ]
+        },
+        "2048": {
+          "prompt_len": 2048,
+          "decode_tok_s_median": 45.21862278511617,
+          "decode_tok_s_runs": [
+            45.21862278511617,
+            45.49916181447917,
+            44.783301387042016
+          ],
+          "ttft_ms_median": 3830.584541996359,
+          "ttft_ms_runs": [
+            3884.3343329936033,
+            3830.584541996359,
+            3801.009666000027
+          ]
+        }
+      },
+      "memory": {
+        "512": {
+          "context_len": 512,
+          "kv_bytes": 83165184,
+          "kv_mb": 79.3125,
+          "layer_count": 36
+        },
+        "1024": {
+          "context_len": 1024,
+          "kv_bytes": 98500608,
+          "kv_mb": 93.9375,
+          "layer_count": 36
+        },
+        "2048": {
+          "context_len": 2048,
+          "kv_bytes": 129171456,
+          "kv_mb": 123.1875,
+          "layer_count": 36
+        },
+        "4096": {
+          "context_len": 4096,
+          "kv_bytes": 190513152,
+          "kv_mb": 181.6875,
+          "layer_count": 36
+        }
+      }
+    },
+    "K3/V2": {
+      "config": "K3/V2",
+      "params": {
+        "type": "tq",
+        "key_bits": 3,
+        "value_bits": 2
+      },
+      "quality": {
+        "cos_sim": 0.705198003741019,
+        "top1_match": true,
+        "seq_len": 500
+      },
+      "speed": {
+        "256": {
+          "prompt_len": 256,
+          "decode_tok_s_median": 58.193541777027896,
+          "decode_tok_s_runs": [
+            58.27214757809484,
+            58.193541777027896,
+            57.78084411481038
+          ],
+          "ttft_ms_median": 671.2584159977268,
+          "ttft_ms_runs": [
+            694.1718340094667,
+            670.5103750136914,
+            671.2584159977268
+          ]
+        },
+        "2048": {
+          "prompt_len": 2048,
+          "decode_tok_s_median": 45.28014377252112,
+          "decode_tok_s_runs": [
+            47.05310146498143,
+            45.01172486541004,
+            45.28014377252112
+          ],
+          "ttft_ms_median": 3950.3358340007253,
+          "ttft_ms_runs": [
+            3882.5754590070574,
+            3950.3358340007253,
+            4031.8167919904226
+          ]
+        }
+      },
+      "memory": {
+        "512": {
+          "context_len": 512,
+          "kv_bytes": 47480832,
+          "kv_mb": 45.28125,
+          "layer_count": 36
+        },
+        "1024": {
+          "context_len": 1024,
+          "kv_bytes": 60456960,
+          "kv_mb": 57.65625,
+          "layer_count": 36
+        },
+        "2048": {
+          "context_len": 2048,
+          "kv_bytes": 86409216,
+          "kv_mb": 82.40625,
+          "layer_count": 36
+        },
+        "4096": {
+          "context_len": 4096,
+          "kv_bytes": 138313728,
+          "kv_mb": 131.90625,
+          "layer_count": 36
+        }
+      }
+    }
+  }
+}

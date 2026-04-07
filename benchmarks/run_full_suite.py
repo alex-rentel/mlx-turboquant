@@ -48,18 +48,21 @@ from mlx_turboquant import apply_turboquant
 _materialize = getattr(mx, "ev" + "al")
 
 
-PROMPT_TEMPLATE = (
-    "You are a careful research assistant analyzing a long technical document. "
-    "Read the following passage carefully and prepare to answer questions about "
-    "its contents.\n\n"
-    "Quantum mechanics is the branch of physics that describes the behavior of "
-    "matter and energy at the smallest scales, where classical physics no longer "
-    "applies. It emerged in the early 20th century from the work of physicists "
-    "such as Max Planck, Albert Einstein, Niels Bohr, Werner Heisenberg, and "
-    "Erwin Schroedinger. The theory introduces several counterintuitive concepts "
-    "that challenge our everyday understanding of reality: wave-particle duality, "
-    "the uncertainty principle, quantum entanglement, and the probabilistic nature "
-    "of measurement. "
+PROMPT_PRELUDE = (
+    "You are a helpful AI research assistant. Below is a long passage "
+    "describing the principles of quantum mechanics, including wave-particle "
+    "duality, the uncertainty principle, and quantum entanglement. Please "
+    "read it carefully and prepare to summarize the key concepts.\n\n"
+)
+
+PROMPT_BODY = (
+    "Quantum mechanics is the branch of physics that describes the behavior "
+    "of matter and energy at the smallest scales, where classical physics "
+    "no longer applies. It emerged in the early 20th century from the work "
+    "of physicists such as Max Planck, Albert Einstein, Niels Bohr, Werner "
+    "Heisenberg, and Erwin Schroedinger. The theory introduces several "
+    "counterintuitive concepts that challenge our everyday understanding "
+    "of reality. "
 )
 
 
@@ -94,11 +97,23 @@ def reset_make_cache(model):
 # ---------------------------------------------------------------------------
 
 def build_prompt(tokenizer, target_tokens):
-    """Build a prompt of approximately `target_tokens` tokens by repeating
-    PROMPT_TEMPLATE and truncating to the exact length."""
-    base = tokenizer.encode(PROMPT_TEMPLATE)
-    repeats = max(1, (target_tokens // max(1, len(base))) + 1)
-    tokens = (base * repeats)[:target_tokens]
+    """Build a prompt of exactly `target_tokens` tokens.
+
+    Uses a unique prelude (appears once) followed by the body paragraph
+    repeated as many times as needed to reach the target length, then
+    truncates. The unique-prelude-plus-repeated-body pattern matches
+    realistic system-prompt + long-document workloads better than naive
+    template repetition (which would duplicate the prelude and produce
+    pathologically repetitive attention).
+    """
+    prelude = tokenizer.encode(PROMPT_PRELUDE)
+    body = tokenizer.encode(PROMPT_BODY)
+    if target_tokens <= len(prelude):
+        tokens = prelude[:target_tokens]
+    else:
+        remaining = target_tokens - len(prelude)
+        repeats = max(1, (remaining // max(1, len(body))) + 1)
+        tokens = prelude + (body * repeats)[:remaining]
     return mx.array(tokens)[None], len(tokens)
 
 
