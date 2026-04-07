@@ -36,7 +36,7 @@ class TurboQuantKVCache:
         residual_window: int = 128,
         rotation_seed: int = 42,
         fp16_sink_size: int = 0,
-        chunk_size: int = 64,
+        chunk_size: int = 0,
         qjl_correction: bool = False,
         qjl_n_proj: int = 32,
     ):
@@ -466,53 +466,74 @@ class TurboQuantKVCache:
     def _compress_old_tokens(self):
         """Move tokens outside the residual window to compressed storage.
 
-        Drains the FP16 buffer in fixed-size chunks of `self.chunk_size`
-        tokens whenever it exceeds `residual_window + chunk_size`. Fixed
-        chunk sizes give Metal kernels stable shapes, which improves
-        kernel template caching (`mx.fast.metal_kernel` recompiles per
-        unique input shape) and amortizes per-call overhead.
+        Two compression strategies, selected by `self.chunk_size`:
 
-        Loops in case the buffer holds multiple chunks worth of tokens
-        (e.g., after a large prefill). Sink storage is independent and
-        is never touched here.
+        - chunk_size == 0 (default, v0.5.0 batch behavior):
+            Wait until the FP16 buffer reaches 2x residual_window, then
+            compress everything beyond residual_window in one call.
+            Single Metal dispatch per drain. Variable shape per call.
+            Phase 3 v0.6.0 benchmarks showed this is the fastest mode.
+
+        - chunk_size > 0 (opt-in fixed-size chunks):
+            Drain whole chunks of `chunk_size` tokens whenever the buffer
+            exceeds `residual_window + chunk_size`. Multiple Metal dispatches
+            per drain (one per chunk). Stable shapes per call. Architecturally
+            friendlier for future kernels that template on chunk dimension.
+
+        Sink storage is independent and never touched here.
         """
         if self.keys is None:
             return
 
-        chunk_size = max(1, self.chunk_size)
+        if self.chunk_size <= 0:
+            # v0.5.0 batch path — single drain, variable size, fastest in
+            # current Metal kernels which do not template on chunk dimension.
+            compress_threshold = self.residual_window * 2
+            if self._fp16_len <= compress_threshold:
+                return
+            n_compress = self._fp16_len - self.residual_window
+            self._drain_chunk(n_compress)
+            return
+
+        # Chunked path — fixed-size drains in a loop.
+        chunk_size = self.chunk_size
         threshold = self.residual_window + chunk_size
-
-        # Drain any whole chunks past the residual window.
         while self._fp16_len >= threshold:
-            n_compress = chunk_size
-            old_keys = self.keys[:, :, :n_compress, :]
-            old_values = self.values[:, :, :n_compress, :]
-            # Shift remaining to front of pre-allocated buffer
-            remaining = self._fp16_len - n_compress
-            self.keys[:, :, :remaining, :] = self.keys[:, :, n_compress:self._fp16_len, :]
-            self.values[:, :, :remaining, :] = self.values[:, :, n_compress:self._fp16_len, :]
-            self._fp16_len = remaining
+            self._drain_chunk(chunk_size)
 
-            # Compress keys and values for this chunk
-            pk_hi, pk_lo, nk, dk = self._compress_one_side(old_keys, is_key=True)
-            pv_hi, pv_lo, nv, dv = self._compress_one_side(old_values, is_key=False)
+    def _drain_chunk(self, n_compress: int) -> None:
+        """Compress and evict the first `n_compress` tokens from the FP16 buffer.
 
-            self._append_compressed(pk_hi, pk_lo, nk, is_key=True)
-            self._append_compressed(pv_hi, pv_lo, nv, is_key=False)
-            self._compressed_len += n_compress
+        Shared between the v0.5.0 batch path and the chunked path.
+        """
+        old_keys = self.keys[:, :, :n_compress, :]
+        old_values = self.values[:, :, :n_compress, :]
+        # Shift remaining to front of pre-allocated buffer
+        remaining = self._fp16_len - n_compress
+        self.keys[:, :, :remaining, :] = self.keys[:, :, n_compress:self._fp16_len, :]
+        self.values[:, :, :remaining, :] = self.values[:, :, n_compress:self._fp16_len, :]
+        self._fp16_len = remaining
 
-            # Incrementally extend decompressed cache
-            if self._decompressed_keys_cache is None:
-                self._decompressed_keys_cache = dk
-                self._decompressed_values_cache = dv
-            else:
-                self._decompressed_keys_cache = mx.concatenate(
-                    [self._decompressed_keys_cache, dk], axis=2
-                )
-                self._decompressed_values_cache = mx.concatenate(
-                    [self._decompressed_values_cache, dv], axis=2
-                )
-            self._decompressed_valid = True
+        # Compress keys and values for this chunk
+        pk_hi, pk_lo, nk, dk = self._compress_one_side(old_keys, is_key=True)
+        pv_hi, pv_lo, nv, dv = self._compress_one_side(old_values, is_key=False)
+
+        self._append_compressed(pk_hi, pk_lo, nk, is_key=True)
+        self._append_compressed(pv_hi, pv_lo, nv, is_key=False)
+        self._compressed_len += n_compress
+
+        # Incrementally extend decompressed cache
+        if self._decompressed_keys_cache is None:
+            self._decompressed_keys_cache = dk
+            self._decompressed_values_cache = dv
+        else:
+            self._decompressed_keys_cache = mx.concatenate(
+                [self._decompressed_keys_cache, dk], axis=2
+            )
+            self._decompressed_values_cache = mx.concatenate(
+                [self._decompressed_values_cache, dv], axis=2
+            )
+        self._decompressed_valid = True
 
     def _route_sink(self, keys: mx.array, values: mx.array) -> tuple[mx.array, mx.array]:
         """Peel off sink-bound tokens from the head of the incoming batch.

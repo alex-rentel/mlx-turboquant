@@ -140,7 +140,7 @@ def apply_turboquant(
     skip_layers: Optional[list[int]] = None,
     auto_detect_outliers: bool = True,
     fp16_sink_size: int = 0,
-    chunk_size: int = 64,
+    chunk_size: int = 0,
     qjl_correction: bool = False,
     qjl_n_proj: int = 32,
 ) -> nn.Module:
@@ -163,9 +163,14 @@ def apply_turboquant(
         fp16_sink_size: Number of leading tokens (e.g., system prompt) to
             permanently store in FP16. These never get compressed and are
             independent of `residual_window`. 0 disables the sink (default).
-        chunk_size: Number of tokens compressed per drain operation. Fixed
-            chunk sizes give Metal kernels stable input shapes, improving
-            kernel template caching. Default 64.
+        chunk_size: Compression strategy selector.
+            - 0 (default): v0.5.0 batch path — single variable-size drain
+              when fp16 buffer reaches 2x residual_window. Fastest in
+              v0.6.0 benchmarks.
+            - >0: Drain in fixed-size chunks of `chunk_size` tokens
+              whenever the buffer exceeds residual_window + chunk_size.
+              Architecturally cleaner; opt in if you need stable Metal
+              kernel input shapes.
         qjl_correction: When True, apply a 1-bit QJL sign-sketch correction
             to the dequantized cache at compression time. Improves cosine
             similarity at the cost of ~5% extra compute per compression

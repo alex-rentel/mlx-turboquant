@@ -1,0 +1,103 @@
+{
+  "model": "mlx-community/gemma-3-1b-it-4bit",
+  "results": [
+    {
+      "config": "baseline",
+      "params": {},
+      "seq_len": 994,
+      "cos_sim": 1.0,
+      "top1_match": true,
+      "decode_tok_s_median": 148.7428978586278,
+      "decode_tok_s_runs": [
+        148.6866543629891,
+        148.85977926763607,
+        148.7428978586278
+      ],
+      "ttft_ms_median": 389.6789160062326,
+      "peak_mem_delta_mb": 0.0
+    },
+    {
+      "config": "k4v2",
+      "params": {
+        "key_bits": 4,
+        "value_bits": 2,
+        "residual_window": 128,
+        "chunk_size": 64
+      },
+      "seq_len": 994,
+      "cos_sim": 0.7277844022228747,
+      "top1_match": false,
+      "decode_tok_s_median": 113.22049349193938,
+      "decode_tok_s_runs": [
+        112.99611137768404,
+        113.22049349193938,
+        113.80321823584083
+      ],
+      "ttft_ms_median": 537.5193330110051,
+      "peak_mem_delta_mb": 0.0
+    },
+    {
+      "config": "k4v2_sink128",
+      "params": {
+        "key_bits": 4,
+        "value_bits": 2,
+        "residual_window": 128,
+        "chunk_size": 64,
+        "fp16_sink_size": 128
+      },
+      "seq_len": 994,
+      "cos_sim": 0.7284399865159632,
+      "top1_match": false,
+      "decode_tok_s_median": 111.85543877385378,
+      "decode_tok_s_runs": [
+        111.89325611925683,
+        111.85543877385378,
+        111.66861646295382
+      ],
+      "ttft_ms_median": 513.6691670049913,
+      "peak_mem_delta_mb": 0.0
+    },
+    {
+      "config": "k4v2_qjl",
+      "params": {
+        "key_bits": 4,
+        "value_bits": 2,
+        "residual_window": 128,
+        "chunk_size": 64,
+        "qjl_correction": true,
+        "qjl_n_proj": 32
+      },
+      "seq_len": 994,
+      "cos_sim": 0.7278984050339761,
+      "top1_match": false,
+      "decode_tok_s_median": 112.97938320730391,
+      "decode_tok_s_runs": [
+        112.88457360946619,
+        112.97938320730391,
+        113.05236709050395
+      ],
+      "ttft_ms_median": 582.714207994286,
+      "peak_mem_delta_mb": 0.0
+    },
+    {
+      "config": "k3v2",
+      "params": {
+        "key_bits": 3,
+        "value_bits": 2,
+        "residual_window": 128,
+        "chunk_size": 64
+      },
+      "seq_len": 994,
+      "cos_sim": 0.7277844022228747,
+      "top1_match": false,
+      "decode_tok_s_median": 113.95951701628908,
+      "decode_tok_s_runs": [
+        113.94977776757763,
+        113.95951701628908,
+        114.04546958456855
+      ],
+      "ttft_ms_median": 538.1945419940166,
+      "peak_mem_delta_mb": 0.0
+    }
+  ]
+}
