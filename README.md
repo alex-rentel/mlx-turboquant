@@ -60,7 +60,7 @@ This library adapts TurboQuant for Apple Silicon's unified memory architecture v
 
 **Fractional bit-widths.** 3.5-bit quantization splits channels: half at 4-bit, half at 3-bit. This fills the quality gap between K3 and K4 for applications that need the memory savings of 3-bit but can't tolerate the quality hit.
 
-## Results (v0.6.0)
+## Results (v0.6.0 end-to-end, v0.7.0 kernel micro-benchmarks)
 
 Benchmarked on M1 Max 64GB, MLX 0.31.1, April 2026. **12 models across 8 architecture families**, 5 TurboQuant configurations each. Full data in [BENCHMARKS.md](BENCHMARKS.md).
 
@@ -104,6 +104,19 @@ At 256-token context (short conversations), K4/V2+sink128 adds only 1-5% overhea
 At 2048 tokens, overhead increases to 12-36% depending on model due to decompression cost scaling with cache size. A fused attention-from-compressed kernel (see [Next Steps](#next-steps)) would reduce this.
 
 **Surprise finding:** K4/V2+sink128 was 30% faster than FP16 baseline on TTFT at 2K context for Qwen3-8B (6,891 ms vs 9,836 ms). The smaller compressed cache reduces memory traffic during prefill.
+
+### Fused QK Kernel Micro-benchmarks (v0.7.0)
+
+The fused kernel computes Q @ K^T directly from packed codebook indices, skipping the decompression step entirely. It's not yet integrated into the end-to-end decode path (see [Next Steps](#next-steps)), but micro-benchmarks show the payoff scales with context length:
+
+| Shape | dequant + matmul | fused kernel | Speedup |
+|---|---|---|---|
+| T_kv=256, D=128 | 301 μs | 266 μs | 1.13x |
+| T_kv=1024, D=128 | 327 μs | 231 μs | 1.42x |
+| T_kv=4096, D=128 | 487 μs | 230 μs | **2.12x** |
+| T_kv=1024, D=256 (Gemma) | 491 μs | 242 μs | **2.03x** |
+
+Full data in [BENCHMARKS_v07.md](BENCHMARKS_v07.md). Design and math in [docs/FUSED_ATTENTION_DESIGN.md](docs/FUSED_ATTENTION_DESIGN.md).
 
 ### Needle-in-a-Haystack
 
@@ -190,7 +203,7 @@ mlx-turboquant benchmark \
 mlx_turboquant/
   cache.py        # TurboQuantKVCache — drop-in for mlx-lm's KVCache
   patch.py        # apply_turboquant() monkey-patch, hybrid attention detection
-  kernels.py      # Fused Metal compute kernels (dequantize, quantize)
+  kernels.py      # Fused Metal kernels (dequantize, quantize, fused QK scores)
   quantizer.py    # TurboQuantMSE (Algo 1) + TurboQuantProd (Algo 2)
   codebook.py     # Lloyd-Max optimal scalar quantizer for Beta distributions
   rotation.py     # Random orthogonal rotation (QR) + Walsh-Hadamard
@@ -200,8 +213,8 @@ mlx_turboquant/
   codebooks/      # Precomputed Lloyd-Max codebooks (.npz)
 benchmarks/       # Full benchmark suite (run_full_suite.py, models.yaml)
 results/          # Raw JSON benchmark data (12 models × 5 configs)
-tests/            # 159 unit tests + 1 integration test
-docs/             # Competitive audit, optimization log, research notes
+tests/            # 176 unit tests + 1 integration test
+docs/             # Competitive audit, fused attention design, optimization log
 ```
 
 ## Tests
@@ -261,7 +274,7 @@ The v0.7.0 kernels are shipped as utilities — they are NOT yet automatically u
 
 ## Limitations
 
-1. **Decode overhead at long context (22-36% at 2K).** Decompression cost scales with cache size. The fused attention kernel would fix this.
+1. **Decode overhead at long context (22-36% at 2K).** Decompression cost scales with cache size. The fused QK kernel (v0.7.0) achieves 2.12x speedup in isolation but is not yet integrated into the SDPA path — end-to-end decode overhead is unchanged from v0.6.0 until v0.8.0 ships the per-family attention patches.
 2. **Error compounding.** Per-vector reconstruction error compounds through layers. Models with fewer KV heads (Gemma3-1B: 1 head) are more fragile.
 3. **Qwen3.5 partial coverage.** Only 8/32 layers use self-attention; memory savings are proportionally smaller.
 4. **Quality depends on outlier detection.** Disabling `auto_detect_outliers` drops Qwen2.5-7B from 0.80 → 0.46 cos_sim at K4/V2.
