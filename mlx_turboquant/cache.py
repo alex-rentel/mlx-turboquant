@@ -153,11 +153,23 @@ class TurboQuantKVCache:
               head_dim:    int
         """
         return {
+            # Packed K state (used by fused_qk_scores_4bit_batched in v0.8.0)
             "packed_keys": self._compressed_keys,
             "key_norms": self._compressed_key_norms,
             "key_centroids": self.k_centroids,
             "rotation": self.rotation,
             "key_bits": int(self.key_bits),
+            # Packed V state (added in v0.9.0 for full fused attention kernel).
+            # V is already compressed alongside K in _compress_one_side and
+            # the packed indices + norms live in _compressed_values /
+            # _compressed_value_norms. The decompressed cache exists for
+            # the standard SDPA path but is not required when the fused
+            # kernel reads packed V directly.
+            "packed_values": self._compressed_values,
+            "value_norms": self._compressed_value_norms,
+            "value_centroids": self.v_centroids,
+            "value_bits": int(self.value_bits),
+            # Position metadata
             "sink_len": self._sink_len,
             "compressed_len": self._compressed_len,
             "fp16_len": self._fp16_len,
