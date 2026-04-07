@@ -1,0 +1,69 @@
+[
+  {
+    "id": "mlx-community/Qwen3.5-9B-4bit",
+    "ok": true,
+    "load_seconds": 1.5737137079995591,
+    "model_class": "Model",
+    "inner_class": "Model",
+    "num_layers": 32,
+    "head_dim": null,
+    "num_kv_heads": null,
+    "num_attention_heads": null,
+    "hidden_size": null,
+    "layer_attention_types": [
+      "linear_attn",
+      "self_attn"
+    ],
+    "forward_seconds": 0.7822478750022128,
+    "logits_shape": [
+      1,
+      4,
+      248320
+    ],
+    "logits_dtype": "mlx.core.bfloat16"
+  },
+  {
+    "id": "mlx-community/DeepSeek-R1-0528-Qwen3-8B-4bit",
+    "ok": true,
+    "load_seconds": 1.1005521250044694,
+    "model_class": "Model",
+    "inner_class": "Qwen3Model",
+    "num_layers": 36,
+    "head_dim": 128,
+    "num_kv_heads": 8,
+    "num_attention_heads": 32,
+    "hidden_size": 4096,
+    "layer_attention_types": [
+      "self_attn"
+    ],
+    "forward_seconds": 0.25139216700335965,
+    "logits_shape": [
+      1,
+      4,
+      151936
+    ],
+    "logits_dtype": "mlx.core.bfloat16"
+  },
+  {
+    "id": "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit",
+    "ok": true,
+    "load_seconds": 1.2814329999964684,
+    "model_class": "Model",
+    "inner_class": "LlamaModel",
+    "num_layers": 32,
+    "head_dim": 128,
+    "num_kv_heads": 8,
+    "num_attention_heads": 32,
+    "hidden_size": 4096,
+    "layer_attention_types": [
+      "self_attn"
+    ],
+    "forward_seconds": 0.306608791986946,
+    "logits_shape": [
+      1,
+      4,
+      128256
+    ],
+    "logits_dtype": "mlx.core.float16"
+  }
+]

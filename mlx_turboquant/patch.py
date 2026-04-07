@@ -214,12 +214,78 @@ def apply_turboquant(
         except Exception:
             pass  # If detection fails, compress all layers
 
-    from mlx_lm.models.cache import KVCache
+    # Detect hybrid attention layers (e.g. Qwen3.5: alternating linear_attn
+    # and self_attn). Linear-attention layers have a fundamentally different
+    # state shape and cannot use TurboQuantKVCache; we must hand them the
+    # cache type the model itself wants. Detection is structural — we look
+    # for linear_attn / linear_attention attributes on each layer.
+    inner_for_layers = getattr(model, "model", model)
+    raw_layers = getattr(inner_for_layers, "layers", None)
+    if raw_layers is None:
+        raw_layers = getattr(model, "layers", []) or []
+
+    linear_attn_layers = set()
+    for i, layer in enumerate(raw_layers):
+        if hasattr(layer, "linear_attn") or hasattr(layer, "linear_attention"):
+            # A layer has linear attention if it has a linear_attn module AND
+            # does NOT have self_attn (or has both but linear_attn is the one
+            # actually used). For Qwen3.5 the layer type alternates, so we
+            # check which module is actually present and active by attribute.
+            has_self = hasattr(layer, "self_attn") or hasattr(layer, "attention")
+            if not has_self:
+                linear_attn_layers.add(i)
+            else:
+                # Mixed: prefer self_attn for compression unless linear is the
+                # only path. Conservative: if both exist, treat as self_attn
+                # and let the model route normally.
+                pass
+
+    has_hybrid = bool(linear_attn_layers)
+    if has_hybrid:
+        import warnings
+        warnings.warn(
+            f"Detected {len(linear_attn_layers)} linear-attention layers in "
+            f"model (hybrid architecture, e.g. Qwen3.5). These layers will "
+            f"use the model's default cache type instead of TurboQuantKVCache.",
+            UserWarning, stacklevel=2,
+        )
+
+    from mlx_lm.models.cache import KVCache, make_prompt_cache
+
+    # Capture the model's CLASS-LEVEL make_cache (if any) before we shadow
+    # it with our own instance attribute. For hybrid architectures this is
+    # the model's architecture-aware cache builder; we need it to populate
+    # the linear-attention slots without recursing back through our own
+    # make_cache (which is what would happen if we called the high-level
+    # make_prompt_cache helper, since it defers to model.make_cache when
+    # present).
+    model_class = type(model)
+    class_level_make_cache = getattr(model_class, "make_cache", None)
+
+    def _build_default_caches():
+        """Build the model's preferred cache list, bypassing our patch."""
+        if class_level_make_cache is not None:
+            return class_level_make_cache(model)
+        # Fallback: use a temporary detachment trick. Save and remove our
+        # instance attr, call make_prompt_cache, restore.
+        instance_attr = model.__dict__.pop("make_cache", None)
+        try:
+            return make_prompt_cache(model)
+        finally:
+            if instance_attr is not None:
+                model.make_cache = instance_attr
 
     def make_cache():
+        # For hybrid models, get the model's preferred cache list once per
+        # call so we can copy the linear-attention slots verbatim.
+        default_caches = _build_default_caches() if has_hybrid else None
+
         caches = []
         for i in range(nl):
-            if i in layers_to_skip:
+            if i in linear_attn_layers:
+                # Hand back the model's own cache type for this layer.
+                caches.append(default_caches[i])
+            elif i in layers_to_skip:
                 caches.append(KVCache())  # FP16 for outlier layers
             else:
                 caches.append(TurboQuantKVCache(

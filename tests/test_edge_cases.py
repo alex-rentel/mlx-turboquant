@@ -313,6 +313,80 @@ class TestPatchEdgeCases:
         except Exception:
             pytest.skip("Could not load test model")
 
+    def test_hybrid_attention_skips_linear_attn_layers(self):
+        """Linear-attention layers (e.g. Qwen3.5) must NOT receive a TurboQuantKVCache.
+
+        Uses a synthetic mock model with mixed self_attn and linear_attn
+        layers so the test runs without needing the real ~5GB model file.
+        """
+        from mlx_turboquant.patch import apply_turboquant
+        from mlx_turboquant.cache import TurboQuantKVCache
+
+        # Build a fake model with 4 layers: [self, linear, self, linear]
+        class FakeArgs:
+            head_dim = 128
+            num_key_value_heads = 8
+            num_attention_heads = 8
+            hidden_size = 1024
+            num_hidden_layers = 4
+
+        class FakeSelfAttnLayer:
+            def __init__(self):
+                self.self_attn = object()
+
+        class FakeLinearAttnLayer:
+            def __init__(self):
+                self.linear_attn = object()
+
+        class FakeInner:
+            def __init__(self):
+                self.args = FakeArgs()
+                self.layers = [
+                    FakeSelfAttnLayer(),
+                    FakeLinearAttnLayer(),
+                    FakeSelfAttnLayer(),
+                    FakeLinearAttnLayer(),
+                ]
+
+        class FakeModel:
+            def __init__(self):
+                self.model = FakeInner()
+                self.args = FakeArgs()
+
+        fake = FakeModel()
+
+        # Patch make_prompt_cache to return placeholder caches we can identify
+        import mlx_lm.models.cache as mlx_cache_mod
+        sentinel = object()
+
+        class SentinelCache:
+            def __init__(self, idx):
+                self.idx = idx
+                self.is_sentinel = True
+
+        original_mpc = mlx_cache_mod.make_prompt_cache
+        mlx_cache_mod.make_prompt_cache = lambda m: [
+            SentinelCache(i) for i in range(4)
+        ]
+
+        try:
+            apply_turboquant(fake, key_bits=4, value_bits=2,
+                             auto_detect_outliers=False)
+            cache = fake.make_cache()
+        finally:
+            mlx_cache_mod.make_prompt_cache = original_mpc
+
+        # Layers 0, 2 should be TurboQuant; layers 1, 3 should be sentinels
+        # (the model's preferred cache type for linear-attention layers)
+        assert isinstance(cache[0], TurboQuantKVCache), \
+            "self_attn layer 0 should be TurboQuant"
+        assert getattr(cache[1], "is_sentinel", False), \
+            "linear_attn layer 1 should be the model default cache"
+        assert isinstance(cache[2], TurboQuantKVCache), \
+            "self_attn layer 2 should be TurboQuant"
+        assert getattr(cache[3], "is_sentinel", False), \
+            "linear_attn layer 3 should be the model default cache"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
