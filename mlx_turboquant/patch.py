@@ -139,6 +139,7 @@ def apply_turboquant(
     rotation_seed: int = 42,
     skip_layers: Optional[list[int]] = None,
     auto_detect_outliers: bool = True,
+    fp16_sink_size: int = 0,
 ) -> nn.Module:
     """Apply TurboQuant KV cache compression to an mlx-lm model.
 
@@ -149,13 +150,16 @@ def apply_turboquant(
         model: An mlx-lm model (Llama, Qwen, Mistral, Gemma, etc.)
         key_bits: Bit-width for key quantization (2, 3, or 4)
         value_bits: Bit-width for value quantization (2, 3, or 4)
-        residual_window: Number of recent tokens to keep in FP16
+        residual_window: Number of recent tokens to keep in FP16 (sliding)
         head_dim: Override head dimension (auto-detected if None)
         num_kv_heads: Override number of KV heads (auto-detected if None)
         num_layers: Override number of layers (auto-detected if None)
         rotation_seed: Seed for the rotation matrix
         skip_layers: Layer indices to keep in FP16 (no compression)
         auto_detect_outliers: Auto-detect outlier layers (default True)
+        fp16_sink_size: Number of leading tokens (e.g., system prompt) to
+            permanently store in FP16. These never get compressed and are
+            independent of `residual_window`. 0 disables the sink (default).
 
     Returns:
         The same model (modified in-place)
@@ -206,6 +210,7 @@ def apply_turboquant(
                     value_bits=value_bits,
                     residual_window=residual_window,
                     rotation_seed=rotation_seed,
+                    fp16_sink_size=fp16_sink_size,
                 ))
         return caches
 
@@ -220,6 +225,7 @@ def apply_turboquant(
         "key_bits": key_bits,
         "value_bits": value_bits,
         "residual_window": residual_window,
+        "fp16_sink_size": fp16_sink_size,
     }
 
     return model

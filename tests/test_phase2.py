@@ -166,6 +166,126 @@ class TestTurboQuantKVCacheBasic:
             assert k_out.shape == (1, 2, 20, d)
 
 
+class TestAttentionSink:
+    """Tests for fp16_sink_size — permanent FP16 region for system prompt."""
+
+    def test_sink_disabled_by_default(self):
+        """fp16_sink_size=0 should preserve all v0.5.0 behavior."""
+        cache = TurboQuantKVCache(head_dim=128, key_bits=4, value_bits=2,
+                                  residual_window=8)
+        assert cache.fp16_sink_size == 0
+        assert cache.sink_keys is None
+        assert cache._sink_len == 0
+
+        keys = mx.array(np.random.randn(1, 2, 50, 128).astype(np.float32))
+        values = mx.array(np.random.randn(1, 2, 50, 128).astype(np.float32))
+        cache.update_and_fetch(keys, values)
+        assert cache.sink_keys is None
+        assert cache._sink_len == 0
+
+    def test_sink_filled_in_single_prefill(self):
+        """A single prefill larger than sink should fill the sink."""
+        cache = TurboQuantKVCache(head_dim=128, key_bits=4, value_bits=2,
+                                  residual_window=8, fp16_sink_size=16)
+        keys = mx.array(np.random.randn(1, 2, 50, 128).astype(np.float32))
+        values = mx.array(np.random.randn(1, 2, 50, 128).astype(np.float32))
+        cache.update_and_fetch(keys, values)
+
+        assert cache._sink_len == 16
+        assert cache.sink_keys.shape == (1, 2, 16, 128)
+        np.testing.assert_array_equal(
+            np.array(cache.sink_keys[:, :, :16, :]),
+            np.array(keys[:, :, :16, :]),
+        )
+        np.testing.assert_array_equal(
+            np.array(cache.sink_values[:, :, :16, :]),
+            np.array(values[:, :, :16, :]),
+        )
+
+    def test_sink_filled_across_multiple_calls(self):
+        """Sink should fill correctly when prefill is split across calls."""
+        cache = TurboQuantKVCache(head_dim=128, key_bits=4, value_bits=2,
+                                  residual_window=4, fp16_sink_size=16)
+        chunk1 = mx.array(np.random.randn(1, 2, 8, 128).astype(np.float32))
+        cache.update_and_fetch(chunk1, chunk1)
+        assert cache._sink_len == 8
+        chunk2 = mx.array(np.random.randn(1, 2, 8, 128).astype(np.float32))
+        cache.update_and_fetch(chunk2, chunk2)
+        assert cache._sink_len == 16
+        assert cache._fp16_len == 0  # no overflow into residual yet
+
+    def test_sink_partial_overlap_with_residual(self):
+        """When a single call straddles the sink boundary, split correctly."""
+        cache = TurboQuantKVCache(head_dim=128, key_bits=4, value_bits=2,
+                                  residual_window=8, fp16_sink_size=16)
+        prefill = mx.array(np.random.randn(1, 2, 24, 128).astype(np.float32))
+        cache.update_and_fetch(prefill, prefill)
+        assert cache._sink_len == 16
+        assert cache._fp16_len == 8
+        np.testing.assert_array_equal(
+            np.array(cache.sink_keys[:, :, :16, :]),
+            np.array(prefill[:, :, :16, :]),
+        )
+
+    def test_sink_survives_compression(self):
+        """Sink must NOT be compressed even after many compression cycles."""
+        sink_size = 8
+        cache = TurboQuantKVCache(head_dim=128, key_bits=4, value_bits=2,
+                                  residual_window=8, fp16_sink_size=sink_size)
+        big = mx.array(np.random.randn(1, 2, 88, 128).astype(np.float32))
+        cache.update_and_fetch(big, big)
+
+        for _ in range(5):
+            chunk = mx.array(np.random.randn(1, 2, 16, 128).astype(np.float32))
+            cache.update_and_fetch(chunk, chunk)
+
+        assert cache._sink_len == sink_size
+        np.testing.assert_array_equal(
+            np.array(cache.sink_keys[:, :, :sink_size, :]),
+            np.array(big[:, :, :sink_size, :]),
+        )
+        assert cache._compressed_len > 0
+
+    def test_sink_returned_at_head_of_kv(self):
+        """Returned KV must have sink tokens as the first sink_len positions."""
+        cache = TurboQuantKVCache(head_dim=128, key_bits=4, value_bits=2,
+                                  residual_window=8, fp16_sink_size=16)
+        prefill = mx.array(np.random.randn(1, 2, 100, 128).astype(np.float32))
+        k_out, _ = cache.update_and_fetch(prefill, prefill)
+        np.testing.assert_array_equal(
+            np.array(k_out[:, :, :16, :]),
+            np.array(prefill[:, :, :16, :]),
+        )
+        assert k_out.shape[2] == cache.offset == 100
+
+    def test_sink_offset_tracking(self):
+        """offset must include sink tokens."""
+        cache = TurboQuantKVCache(head_dim=128, key_bits=4, value_bits=2,
+                                  residual_window=8, fp16_sink_size=16)
+        prefill = mx.array(np.random.randn(1, 2, 32, 128).astype(np.float32))
+        cache.update_and_fetch(prefill, prefill)
+        assert cache.offset == 32
+        decode = mx.array(np.random.randn(1, 2, 1, 128).astype(np.float32))
+        cache.update_and_fetch(decode, decode)
+        assert cache.offset == 33
+
+    def test_sink_meta_state_roundtrip(self):
+        """meta_state should serialize and restore sink config."""
+        cache = TurboQuantKVCache(head_dim=128, key_bits=4, value_bits=2,
+                                  fp16_sink_size=16)
+        prefill = mx.array(np.random.randn(1, 2, 20, 128).astype(np.float32))
+        cache.update_and_fetch(prefill, prefill)
+
+        meta = cache.meta_state
+        assert meta["fp16_sink_size"] == "16"
+        assert meta["sink_len"] == "16"
+
+        new_cache = TurboQuantKVCache(head_dim=128, key_bits=4, value_bits=2,
+                                       fp16_sink_size=16)
+        new_cache.meta_state = meta
+        assert new_cache._sink_len == 16
+
+
 class TestCacheReconstructionQuality:
     """Test that compressed tokens are faithfully reconstructed."""
 

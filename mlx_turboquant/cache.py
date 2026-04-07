@@ -34,12 +34,14 @@ class TurboQuantKVCache:
         value_bits: float = 2,
         residual_window: int = 128,
         rotation_seed: int = 42,
+        fp16_sink_size: int = 0,
     ):
         self.head_dim = head_dim
         self.num_kv_heads = num_kv_heads
         self.key_bits = key_bits
         self.value_bits = value_bits
         self.residual_window = residual_window
+        self.fp16_sink_size = fp16_sink_size
 
         # Rotation matrix (QR decomposition — WHT tested but degraded
         # Gemma quality by >0.5%, see commit history)
@@ -67,6 +69,14 @@ class TurboQuantKVCache:
             self.v_centroids = self.v_boundaries = None
         else:
             self.v_centroids, self.v_boundaries = get_codebook(head_dim, int(value_bits))
+
+        # FP16 attention sink: first N tokens, NEVER compressed.
+        # Independent of the sliding residual window. Used to permanently
+        # preserve system prompt tokens that define tool schemas, instruction
+        # format, etc. Disabled when fp16_sink_size == 0.
+        self.sink_keys: Optional[mx.array] = None   # (B, H, fp16_sink_size, D)
+        self.sink_values: Optional[mx.array] = None # (B, H, fp16_sink_size, D)
+        self._sink_len: int = 0                     # valid tokens in sink (0..fp16_sink_size)
 
         # FP16 storage for recent tokens (residual window)
         self.keys: Optional[mx.array] = None       # (B, H, capacity, D) pre-allocated
@@ -102,18 +112,33 @@ class TurboQuantKVCache:
             self._compressed_key_norms,
             self._compressed_values,
             self._compressed_value_norms,
+            self.sink_keys,
+            self.sink_values,
         )
 
     @state.setter
     def state(self, v):
-        (
-            self.keys,
-            self.values,
-            self._compressed_keys,
-            self._compressed_key_norms,
-            self._compressed_values,
-            self._compressed_value_norms,
-        ) = v
+        # Backward compatible: older states have 6 elements (no sink fields).
+        if len(v) == 6:
+            (
+                self.keys,
+                self.values,
+                self._compressed_keys,
+                self._compressed_key_norms,
+                self._compressed_values,
+                self._compressed_value_norms,
+            ) = v
+        else:
+            (
+                self.keys,
+                self.values,
+                self._compressed_keys,
+                self._compressed_key_norms,
+                self._compressed_values,
+                self._compressed_value_norms,
+                self.sink_keys,
+                self.sink_values,
+            ) = v
         self._decompressed_valid = False
 
     @property
@@ -124,15 +149,21 @@ class TurboQuantKVCache:
             "head_dim": str(self.head_dim),
             "key_bits": str(self.key_bits),
             "value_bits": str(self.value_bits),
+            "fp16_sink_size": str(self.fp16_sink_size),
+            "sink_len": str(self._sink_len),
         }
 
     @meta_state.setter
     def meta_state(self, v):
         self.offset = int(v["offset"])
         self._compressed_len = int(v["compressed_len"])
+        if "fp16_sink_size" in v:
+            self.fp16_sink_size = int(v["fp16_sink_size"])
+        if "sink_len" in v:
+            self._sink_len = int(v["sink_len"])
 
     def empty(self) -> bool:
-        return self._fp16_len == 0 and self._compressed_len == 0
+        return self._fp16_len == 0 and self._compressed_len == 0 and self._sink_len == 0
 
     def is_trimmable(self) -> bool:
         return False  # TurboQuant cache doesn't support trimming
@@ -143,12 +174,15 @@ class TurboQuantKVCache:
     @property
     def nbytes(self) -> int:
         total = 0
+        elem_size = 4  # float32
+        D = self.head_dim
         if self.keys is not None and self._fp16_len > 0:
             # Only count valid FP16 tokens, not pre-allocated capacity
-            elem_size = 4  # float32
-            D = self.head_dim
             B, H = self.keys.shape[0], self.keys.shape[1]
             total += 2 * B * H * self._fp16_len * D * elem_size  # keys + values
+        if self.sink_keys is not None and self._sink_len > 0:
+            B, H = self.sink_keys.shape[0], self.sink_keys.shape[1]
+            total += 2 * B * H * self._sink_len * D * elem_size  # sink keys + values
         if self._compressed_keys is not None:
             total += self._compressed_keys.nbytes + self._compressed_key_norms.nbytes
             total += self._compressed_values.nbytes + self._compressed_value_norms.nbytes
@@ -363,6 +397,49 @@ class TurboQuantKVCache:
         self._decompressed_valid = True
         self._dequant_calls += 1
 
+    def _route_sink(self, keys: mx.array, values: mx.array) -> tuple[mx.array, mx.array]:
+        """Peel off sink-bound tokens from the head of the incoming batch.
+
+        Returns the (keys, values) that should flow into the residual buffer
+        after sink tokens have been written to sink storage. If the sink is
+        disabled or already full, returns the inputs unchanged.
+        """
+        if self.fp16_sink_size <= 0:
+            return keys, values
+
+        prev_offset = self.offset
+        if prev_offset >= self.fp16_sink_size:
+            return keys, values  # sink already full
+
+        T_new = keys.shape[2]
+        n_sink_new = min(self.fp16_sink_size - prev_offset, T_new)
+        if n_sink_new <= 0:
+            return keys, values
+
+        sink_k = keys[:, :, :n_sink_new, :]
+        sink_v = values[:, :, :n_sink_new, :]
+
+        if self.sink_keys is None:
+            B, H, _, D = keys.shape
+            self.sink_keys = mx.zeros(
+                (B, H, self.fp16_sink_size, D), dtype=keys.dtype
+            )
+            self.sink_values = mx.zeros(
+                (B, H, self.fp16_sink_size, D), dtype=values.dtype
+            )
+
+        # Write sink tokens at their absolute position [prev_offset, prev_offset + n_sink_new)
+        self.sink_keys[:, :, prev_offset:prev_offset + n_sink_new, :] = sink_k
+        self.sink_values[:, :, prev_offset:prev_offset + n_sink_new, :] = sink_v
+        self._sink_len = prev_offset + n_sink_new
+
+        # Return remaining tokens (may be empty)
+        if n_sink_new == T_new:
+            empty_k = keys[:, :, :0, :]
+            empty_v = values[:, :, :0, :]
+            return empty_k, empty_v
+        return keys[:, :, n_sink_new:, :], values[:, :, n_sink_new:, :]
+
     def update_and_fetch(
         self, keys: mx.array, values: mx.array
     ) -> tuple[mx.array, mx.array]:
@@ -375,62 +452,86 @@ class TurboQuantKVCache:
         Returns:
             (all_keys, all_values) for attention computation, both in FP16/FP32
         """
-        # Append new tokens to FP16 buffer using pre-allocated window
-        if self.keys is None:
-            # First call: pre-allocate with headroom
-            B, H, T_new, D = keys.shape
-            cap = max(T_new, self.residual_window * 2) + 256
-            self._fp16_capacity = cap
-            self._fp16_len = T_new
-            self.keys = mx.zeros((B, H, cap, D), dtype=keys.dtype)
-            self.values = mx.zeros((B, H, cap, D), dtype=values.dtype)
-            self.keys[:, :, :T_new, :] = keys
-            self.values[:, :, :T_new, :] = values
-        else:
-            T_new = keys.shape[2]
-            new_len = self._fp16_len + T_new
-            if new_len > self._fp16_capacity:
-                # Grow buffer (rare after initial prefill)
-                B, H, _, D = self.keys.shape
-                new_cap = new_len + 256
-                new_k = mx.zeros((B, H, new_cap, D), dtype=keys.dtype)
-                new_v = mx.zeros((B, H, new_cap, D), dtype=values.dtype)
-                new_k[:, :, :self._fp16_len, :] = self.keys[:, :, :self._fp16_len, :]
-                new_v[:, :, :self._fp16_len, :] = self.values[:, :, :self._fp16_len, :]
-                self.keys = new_k
-                self.values = new_v
-                self._fp16_capacity = new_cap
-            # Write new tokens in-place (no concat)
-            self.keys[:, :, self._fp16_len:self._fp16_len + T_new, :] = keys
-            self.values[:, :, self._fp16_len:self._fp16_len + T_new, :] = values
-            self._fp16_len = new_len
+        T_total = keys.shape[2]
 
-        self.offset += keys.shape[2]
+        # Route sink-bound tokens out of the residual flow first.
+        keys_rest, values_rest = self._route_sink(keys, values)
+        T_new = keys_rest.shape[2]
 
-        # Compress old tokens if residual window is exceeded
+        # Append remaining tokens to FP16 residual buffer using pre-allocation
+        if T_new > 0:
+            if self.keys is None:
+                # First residual write: pre-allocate with headroom
+                B, H, _, D = keys_rest.shape
+                cap = max(T_new, self.residual_window * 2) + 256
+                self._fp16_capacity = cap
+                self._fp16_len = T_new
+                self.keys = mx.zeros((B, H, cap, D), dtype=keys_rest.dtype)
+                self.values = mx.zeros((B, H, cap, D), dtype=values_rest.dtype)
+                self.keys[:, :, :T_new, :] = keys_rest
+                self.values[:, :, :T_new, :] = values_rest
+            else:
+                new_len = self._fp16_len + T_new
+                if new_len > self._fp16_capacity:
+                    # Grow buffer (rare after initial prefill)
+                    B, H, _, D = self.keys.shape
+                    new_cap = new_len + 256
+                    new_k = mx.zeros((B, H, new_cap, D), dtype=keys_rest.dtype)
+                    new_v = mx.zeros((B, H, new_cap, D), dtype=values_rest.dtype)
+                    new_k[:, :, :self._fp16_len, :] = self.keys[:, :, :self._fp16_len, :]
+                    new_v[:, :, :self._fp16_len, :] = self.values[:, :, :self._fp16_len, :]
+                    self.keys = new_k
+                    self.values = new_v
+                    self._fp16_capacity = new_cap
+                # Write new tokens in-place (no concat)
+                self.keys[:, :, self._fp16_len:self._fp16_len + T_new, :] = keys_rest
+                self.values[:, :, self._fp16_len:self._fp16_len + T_new, :] = values_rest
+                self._fp16_len = new_len
+
+        self.offset += T_total
+
+        # Compress old tokens if residual window is exceeded.
+        # Note: sink storage is separate and never touched by compression.
         self._compress_old_tokens()
 
-        # Build full KV using cached decompression (only re-decompresses
-        # when _compress_old_tokens actually moves tokens to compressed storage)
+        # Build full KV: [sink (FP16, permanent) | decompressed_middle | residual_fp16]
+        # Only re-decompresses when _compress_old_tokens moved tokens to
+        # compressed storage. Sink tokens are always returned as-is.
+        if self._compressed_len > 0 and not self._decompressed_valid:
+            self._decompressed_keys_cache = self._dequantize_kv(
+                self._compressed_keys, self._compressed_key_norms,
+                self.k_centroids, self.key_bits,
+            )
+            self._decompressed_values_cache = self._dequantize_kv(
+                self._compressed_values, self._compressed_value_norms,
+                self.v_centroids, self.value_bits,
+            )
+            self._decompressed_valid = True
+            self._dequant_calls += 1
+
+        parts_k = []
+        parts_v = []
+        if self._sink_len > 0:
+            parts_k.append(self.sink_keys[:, :, :self._sink_len, :])
+            parts_v.append(self.sink_values[:, :, :self._sink_len, :])
         if self._compressed_len > 0:
-            if not self._decompressed_valid:
-                self._decompressed_keys_cache = self._dequantize_kv(
-                    self._compressed_keys, self._compressed_key_norms,
-                    self.k_centroids, self.key_bits,
-                )
-                self._decompressed_values_cache = self._dequantize_kv(
-                    self._compressed_values, self._compressed_value_norms,
-                    self.v_centroids, self.value_bits,
-                )
-                self._decompressed_valid = True
-                self._dequant_calls += 1
-            fp16_keys = self.keys[:, :, :self._fp16_len, :]
-            fp16_values = self.values[:, :, :self._fp16_len, :]
-            all_keys = mx.concatenate([self._decompressed_keys_cache, fp16_keys], axis=2)
-            all_values = mx.concatenate([self._decompressed_values_cache, fp16_values], axis=2)
+            parts_k.append(self._decompressed_keys_cache)
+            parts_v.append(self._decompressed_values_cache)
+        if self._fp16_len > 0:
+            parts_k.append(self.keys[:, :, :self._fp16_len, :])
+            parts_v.append(self.values[:, :, :self._fp16_len, :])
+
+        if len(parts_k) == 0:
+            # Cache fully empty (e.g., zero-token update before any state).
+            # Return an empty (B, H, 0, D) array shaped from the input.
+            all_keys = keys[:, :, :0, :]
+            all_values = values[:, :, :0, :]
+        elif len(parts_k) == 1:
+            all_keys = parts_k[0]
+            all_values = parts_v[0]
         else:
-            all_keys = self.keys[:, :, :self._fp16_len, :]
-            all_values = self.values[:, :, :self._fp16_len, :]
+            all_keys = mx.concatenate(parts_k, axis=2)
+            all_values = mx.concatenate(parts_v, axis=2)
 
         return all_keys, all_values
 
