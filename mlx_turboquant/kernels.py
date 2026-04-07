@@ -372,8 +372,7 @@ def metal_quantize_4bit(inp: mx.array, rotation: mx.array,
 
 _FUSED_QK_4BIT_SOURCE = """
     // 2D grid: x = kv_idx, y = q_idx. T_kv and T_q are inferred from
-    // grid dimensions set on the Python side, so we don't need to read
-    // them from buffer metadata (Metal buffer pointers have no .size()).
+    // grid dimensions set on the Python side.
     uint kv_idx = thread_position_in_grid.x;
     uint q_idx = thread_position_in_grid.y;
     uint T_kv = threads_per_grid.x;
@@ -381,18 +380,34 @@ _FUSED_QK_4BIT_SOURCE = """
     uint D_val = D;
     uint half_D = D_val / 2;
 
+    // Threadgroup-shared copy of the 16 centroids. Every thread reads
+    // them D times inside the inner loop; sharing saves one global read
+    // per centroid lookup. 16 floats = 64 bytes, trivially fits.
+    threadgroup float shared_centroids[16];
+    uint local_id =
+        thread_position_in_threadgroup.y * threads_per_threadgroup.x
+        + thread_position_in_threadgroup.x;
+    uint local_size =
+        threads_per_threadgroup.x * threads_per_threadgroup.y;
+    for (uint i = local_id; i < 16; i += local_size) {
+        shared_centroids[i] = centroids[i];
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
     float acc = 0.0f;
+    uint q_base = q_idx * D_val;
+    uint k_base = kv_idx * half_D;
     for (uint j = 0; j < D_val; j++) {
         uint byte_idx = j >> 1;
-        uint packed_byte = packed_k[kv_idx * half_D + byte_idx];
+        uint packed_byte = packed_k[k_base + byte_idx];
         uint idx;
         if ((j & 1u) == 0u) {
             idx = packed_byte & 0x0Fu;
         } else {
             idx = (packed_byte >> 4) & 0x0Fu;
         }
-        float cent = centroids[idx];
-        acc += q_rot[q_idx * D_val + j] * cent;
+        float cent = shared_centroids[idx];
+        acc += q_rot[q_base + j] * cent;
     }
     out[q_idx * T_kv + kv_idx] = norms_k[kv_idx] * acc;
 """
