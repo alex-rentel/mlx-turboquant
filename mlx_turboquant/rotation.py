@@ -78,6 +78,38 @@ def inverse_rotate(y: mx.array, rotation: mx.array) -> mx.array:
     return y @ rotation
 
 
+def pre_rotate_query(query: mx.array, rotation: mx.array) -> mx.array:
+    """Pre-rotate query vectors for fused attention-from-compressed.
+
+    Computes ``Q_rot = Q @ R.T`` — the same forward rotation that is
+    applied to K during quantization. This is the key transformation
+    that lets us compute dot products against packed codebook indices
+    without materializing dequantized K vectors.
+
+    Math:
+        K_hat[k] = norms[k] * (centroids[idx[k,:]] @ R)
+        Q[q] . K_hat[k] = norms[k] * Q[q] @ R.T . centroids[idx[k,:]]
+                        = norms[k] * Q_rot[q] . centroids[idx[k,:]]
+
+    So if we pre-rotate Q once per decode step, the fused QK kernel
+    only needs centroid lookups — no inverse rotation per token.
+
+    Args:
+        query: Query vectors, shape (..., d). Typically
+               (B, H, T_q, D) in the attention hot path.
+        rotation: Rotation matrix (d, d) float32.
+
+    Returns:
+        Rotated query vectors, same shape as input.
+
+    Notes:
+        This is mathematically identical to ``rotate(query, rotation)`` —
+        both are just ``query @ rotation.T``. It exists as a named
+        function so the fused-attention code path is self-documenting.
+    """
+    return query @ rotation.T
+
+
 def hadamard_matrix(d: int) -> mx.array:
     """Generate a normalized Walsh-Hadamard matrix of size d.
 
