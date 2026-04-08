@@ -67,7 +67,21 @@ models:
     tier: 2
     notes: "1 KV head, minimum viable. Auto-upgrades to K4/V3"
 
-  # === Tier 3: Experimental ===
+  # === Tier 3: Large / experimental ===
+  # Opt-in only via `--tier 3`. Not run as part of routine validation.
+  # Llama-3.1-70B-4bit weights ~40GB; tight but fits on 64GB unified memory
+  # alongside a 4K KV cache. Qwen3.5-35B-A3B is a sparse MoE — only ~3B
+  # active params per token, much friendlier on memory bandwidth.
+  - id: mlx-community/Meta-Llama-3.1-70B-Instruct-4bit
+    name: Llama-3.1-70B
+    tier: 3
+    notes: "Large GQA model, stress test for KV memory savings at scale"
+
+  - id: mlx-community/Qwen3.5-35B-A3B-4bit
+    name: Qwen3.5-35B-A3B
+    tier: 3
+    notes: "Sparse MoE (3B active), hybrid attention — partial TQ coverage"
+
   - id: prism-ml/Bonsai-8B-mlx-1bit
     name: Bonsai-8B
     tier: 3
