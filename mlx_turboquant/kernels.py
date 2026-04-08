@@ -6,6 +6,34 @@ These kernels eliminate intermediate array allocations by fusing:
 
 Each kernel runs as a single Metal dispatch, avoiding Python overhead and
 intermediate tensor materialization.
+
+Research-only primitives
+------------------------
+
+The ``metal_dequantize`` and ``metal_quantize_4bit`` kernels are on the
+supported decode path and are used by ``TurboQuantKVCache`` automatically.
+
+The ``fused_qk_scores_{2,3,4}bit`` kernels and ``pre_rotate_query`` utility
+(in ``mlx_turboquant.rotation``) ship as *research-only primitives* and
+are NOT wired into ``apply_turboquant`` or the decode path. They are
+preserved here as library functions for users who want to experiment
+with attention-from-compressed patterns in their own code.
+
+We made two attempts to integrate them end-to-end — a decomposed SDPA
+call (v0.8.0, branch ``feat/fused-sdpa-qwen3``) and a single-dispatch
+fused attention kernel (v0.9.0, branch ``feat/full-fused-attention``).
+Both were provably correct but lost to ``mx.fast.scaled_dot_product_attention``
+at every tested decode shape. The structural reason: at realistic decode
+shapes both paths are dispatch/latency/compute bound, not memory-bandwidth
+bound, so the packed-KV memory advantage never materializes. Full
+post-mortems in ``docs/FUSED_SDPA_RESULTS.md`` and
+``docs/FULL_FUSED_ATTENTION_RESULTS.md``.
+
+A source-level tripwire test
+(``tests/test_fused_kernel_integration_tripwire.py``) enforces that these
+primitives stay out of the supported decode path. If you are wiring them
+in, delete the tripwire and replace it with a real end-to-end integration
+test.
 """
 
 import mlx.core as mx

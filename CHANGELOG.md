@@ -2,6 +2,65 @@
 
 All notable changes to mlx-turboquant.
 
+## [1.0.0] — 2026-04-08
+
+First stable release. No algorithmic changes — this release draws a
+semver line around the library and commits to keeping the public API
+stable from here on.
+
+### Stabilized public API
+
+Exported from `mlx_turboquant` and covered by semver:
+
+- `apply_turboquant(model, **kwargs)` — primary entry point
+- `enable_turboquant(model, bits, **kwargs)` — symmetric convenience
+- `TurboQuantKVCache` — cache class
+- `TurboQuantMSE`, `TurboQuantProd` — low-level quantizers
+
+Everything else (`mlx_turboquant.kernels`, `.rotation`, `.codebook`,
+`.packing`, `.qjl`) is explicitly internal and may change between minor
+versions without a deprecation warning.
+
+### Added
+
+- `__all__` in `mlx_turboquant/__init__.py` defines the public surface
+- Semver + deprecation policy documented in the package docstring and README
+- User-facing README rewrite: install → quick start → config selector →
+  validated models → troubleshooting → limitations → versioning
+- `docs/INTERNALS.md` — engineering history, kernel benchmarks, fused
+  attention post-mortems, community implementations
+- `.github/workflows/test.yml` — CI on macOS-14 ARM runner across
+  Python 3.10 / 3.11 / 3.12
+- `examples/long_context_chat.py` — 50-line demo script showing memory
+  usage under K4/V2 + sink128 on Qwen3-8B
+
+### Changed
+
+- `fused_qk_scores_{2,3,4}bit` and `pre_rotate_query` are formally
+  documented as **research-only primitives**, NOT part of the supported
+  decode path. Module docstring in `kernels.py` explains the two
+  integration attempts (v0.8.0 decomposed SDPA, v0.9.0 full single-dispatch
+  kernel) and why both were preserved as documented negative results
+  rather than shipped. The `precomputed Q·centroid table` idea is
+  demoted from "most promising near-term path" to "speculative future
+  work — pending 32K+ context investigation."
+- Version history and engineering post-mortems moved from README to
+  `docs/INTERNALS.md`.
+- `__version__` synced with `pyproject.toml` (was stale at `0.5.0`).
+
+### Fixed
+
+(Already shipped in v0.8.1 but repeated here since v0.8.1 was never
+tagged as a release.)
+
+- `TurboQuantKVCache.nbytes` undercounted fractional-bit configs.
+- Aliased in-place buffer shift in `_drain_chunk` is now safe under MLX's
+  lazy graph.
+- Metal dequantize fallback is sticky per cache instance and emits a
+  one-time `RuntimeWarning`.
+- `detect_outlier_layers` returns `[]` instead of a NaN-poisoned
+  threshold when no key norms are positive.
+
 ## [0.8.1] — 2026-04-08
 
 > Note: v0.8.0 and v0.9.0 refer to in-progress fused-attention attempts
