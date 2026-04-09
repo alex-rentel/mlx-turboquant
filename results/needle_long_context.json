@@ -1,0 +1,410 @@
+[
+  {
+    "model": "Qwen3-8B",
+    "id": "mlx-community/Qwen3-8B-4bit",
+    "configs": {
+      "FP16": [
+        {
+          "context": 8192,
+          "position": 0.1,
+          "found": true,
+          "seconds": 41.4,
+          "error": null
+        },
+        {
+          "context": 8192,
+          "position": 0.5,
+          "found": true,
+          "seconds": 41.37,
+          "error": null
+        },
+        {
+          "context": 8192,
+          "position": 0.9,
+          "found": true,
+          "seconds": 41.33,
+          "error": null
+        },
+        {
+          "context": 16384,
+          "position": 0.1,
+          "found": true,
+          "seconds": 91.59,
+          "error": null
+        },
+        {
+          "context": 16384,
+          "position": 0.5,
+          "found": true,
+          "seconds": 91.65,
+          "error": null
+        },
+        {
+          "context": 16384,
+          "position": 0.9,
+          "found": true,
+          "seconds": 91.63,
+          "error": null
+        },
+        {
+          "context": 32768,
+          "position": 0.1,
+          "found": true,
+          "seconds": 218.58,
+          "error": null
+        },
+        {
+          "context": 32768,
+          "position": 0.5,
+          "found": true,
+          "seconds": 222.09,
+          "error": null
+        },
+        {
+          "context": 32768,
+          "position": 0.9,
+          "found": true,
+          "seconds": 219.21,
+          "error": null
+        }
+      ],
+      "K4/V2+sink128": [
+        {
+          "context": 8192,
+          "position": 0.1,
+          "found": true,
+          "seconds": 32.33,
+          "error": null
+        },
+        {
+          "context": 8192,
+          "position": 0.5,
+          "found": true,
+          "seconds": 32.3,
+          "error": null
+        },
+        {
+          "context": 8192,
+          "position": 0.9,
+          "found": true,
+          "seconds": 32.3,
+          "error": null
+        },
+        {
+          "context": 16384,
+          "position": 0.1,
+          "found": true,
+          "seconds": 77.76,
+          "error": null
+        },
+        {
+          "context": 16384,
+          "position": 0.5,
+          "found": true,
+          "seconds": 78.87,
+          "error": null
+        },
+        {
+          "context": 16384,
+          "position": 0.9,
+          "found": true,
+          "seconds": 77.74,
+          "error": null
+        },
+        {
+          "context": 32768,
+          "position": 0.1,
+          "found": true,
+          "seconds": 236.06,
+          "error": null
+        },
+        {
+          "context": 32768,
+          "position": 0.5,
+          "found": true,
+          "seconds": 235.32,
+          "error": null
+        },
+        {
+          "context": 32768,
+          "position": 0.9,
+          "found": true,
+          "seconds": 231.47,
+          "error": null
+        }
+      ]
+    }
+  },
+  {
+    "model": "Llama-3.1-8B",
+    "id": "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit",
+    "configs": {
+      "FP16": [
+        {
+          "context": 8192,
+          "position": 0.1,
+          "found": true,
+          "seconds": 24.73,
+          "error": null
+        },
+        {
+          "context": 8192,
+          "position": 0.5,
+          "found": true,
+          "seconds": 24.69,
+          "error": null
+        },
+        {
+          "context": 8192,
+          "position": 0.9,
+          "found": true,
+          "seconds": 24.67,
+          "error": null
+        },
+        {
+          "context": 16384,
+          "position": 0.1,
+          "found": true,
+          "seconds": 55.64,
+          "error": null
+        },
+        {
+          "context": 16384,
+          "position": 0.5,
+          "found": true,
+          "seconds": 55.61,
+          "error": null
+        },
+        {
+          "context": 16384,
+          "position": 0.9,
+          "found": true,
+          "seconds": 55.64,
+          "error": null
+        },
+        {
+          "context": 32768,
+          "position": 0.1,
+          "found": true,
+          "seconds": 165.97,
+          "error": null
+        },
+        {
+          "context": 32768,
+          "position": 0.5,
+          "found": true,
+          "seconds": 138.54,
+          "error": null
+        },
+        {
+          "context": 32768,
+          "position": 0.9,
+          "found": true,
+          "seconds": 137.58,
+          "error": null
+        }
+      ],
+      "K4/V2+sink128": [
+        {
+          "context": 8192,
+          "position": 0.1,
+          "found": true,
+          "seconds": 31.82,
+          "error": null
+        },
+        {
+          "context": 8192,
+          "position": 0.5,
+          "found": true,
+          "seconds": 31.73,
+          "error": null
+        },
+        {
+          "context": 8192,
+          "position": 0.9,
+          "found": true,
+          "seconds": 31.76,
+          "error": null
+        },
+        {
+          "context": 16384,
+          "position": 0.1,
+          "found": true,
+          "seconds": 75.27,
+          "error": null
+        },
+        {
+          "context": 16384,
+          "position": 0.5,
+          "found": true,
+          "seconds": 75.04,
+          "error": null
+        },
+        {
+          "context": 16384,
+          "position": 0.9,
+          "found": true,
+          "seconds": 75.04,
+          "error": null
+        },
+        {
+          "context": 32768,
+          "position": 0.1,
+          "found": true,
+          "seconds": 205.07,
+          "error": null
+        },
+        {
+          "context": 32768,
+          "position": 0.5,
+          "found": true,
+          "seconds": 202.3,
+          "error": null
+        },
+        {
+          "context": 32768,
+          "position": 0.9,
+          "found": true,
+          "seconds": 203.71,
+          "error": null
+        }
+      ]
+    }
+  },
+  {
+    "model": "Mistral-7B",
+    "id": "mlx-community/Mistral-7B-Instruct-v0.3-4bit",
+    "configs": {
+      "FP16": [
+        {
+          "context": 8192,
+          "position": 0.1,
+          "found": true,
+          "seconds": 22.8,
+          "error": null
+        },
+        {
+          "context": 8192,
+          "position": 0.5,
+          "found": true,
+          "seconds": 22.75,
+          "error": null
+        },
+        {
+          "context": 8192,
+          "position": 0.9,
+          "found": false,
+          "seconds": 22.67,
+          "error": null
+        },
+        {
+          "context": 16384,
+          "position": 0.1,
+          "found": false,
+          "seconds": 53.99,
+          "error": null
+        },
+        {
+          "context": 16384,
+          "position": 0.5,
+          "found": false,
+          "seconds": 54.0,
+          "error": null
+        },
+        {
+          "context": 16384,
+          "position": 0.9,
+          "found": false,
+          "seconds": 54.01,
+          "error": null
+        },
+        {
+          "context": 32768,
+          "position": 0.1,
+          "found": false,
+          "seconds": 135.18,
+          "error": null
+        },
+        {
+          "context": 32768,
+          "position": 0.5,
+          "found": false,
+          "seconds": 135.08,
+          "error": null
+        },
+        {
+          "context": 32768,
+          "position": 0.9,
+          "found": false,
+          "seconds": 135.07,
+          "error": null
+        }
+      ],
+      "K4/V2+sink128": [
+        {
+          "context": 8192,
+          "position": 0.1,
+          "found": false,
+          "seconds": 29.13,
+          "error": null
+        },
+        {
+          "context": 8192,
+          "position": 0.5,
+          "found": false,
+          "seconds": 29.31,
+          "error": null
+        },
+        {
+          "context": 8192,
+          "position": 0.9,
+          "found": false,
+          "seconds": 29.29,
+          "error": null
+        },
+        {
+          "context": 16384,
+          "position": 0.1,
+          "found": false,
+          "seconds": 73.26,
+          "error": null
+        },
+        {
+          "context": 16384,
+          "position": 0.5,
+          "found": false,
+          "seconds": 73.17,
+          "error": null
+        },
+        {
+          "context": 16384,
+          "position": 0.9,
+          "found": false,
+          "seconds": 73.16,
+          "error": null
+        },
+        {
+          "context": 32768,
+          "position": 0.1,
+          "found": false,
+          "seconds": 195.87,
+          "error": null
+        },
+        {
+          "context": 32768,
+          "position": 0.5,
+          "found": false,
+          "seconds": 195.6,
+          "error": null
+        },
+        {
+          "context": 32768,
+          "position": 0.9,
+          "found": false,
+          "seconds": 195.7,
+          "error": null
+        }
+      ]
+    }
+  }
+]

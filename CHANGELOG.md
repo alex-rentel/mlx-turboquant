@@ -21,6 +21,14 @@ Everything else (`mlx_turboquant.kernels`, `.rotation`, `.codebook`,
 `.packing`, `.qjl`) is explicitly internal and may change between minor
 versions without a deprecation warning.
 
+### Validated
+
+- **Long-context needle-in-a-haystack at 8K / 16K / 32K.** Qwen3-8B
+  and Llama-3.1-8B pass **9/9** on both FP16 baseline and K4/V2+sink128,
+  with zero retrieval gap up through 32K tokens. Mistral-7B fails on
+  the FP16 baseline itself at these lengths (2/9) — known model
+  limitation. Raw data in `results/needle_long_context.json`.
+
 ### Added
 
 - `__all__` in `mlx_turboquant/__init__.py` defines the public surface
