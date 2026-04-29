@@ -2,6 +2,58 @@
 
 All notable changes to mlx-turboquant.
 
+## [1.0.3] — 2026-04-29
+
+Patch release. Tooling, contributor docs, dead-code removal, input
+hardening. No production runtime changes; existing behavior preserved.
+
+### Added
+
+- **`pytest-cov` in CI.** Coverage report runs on the 3.12 matrix entry
+  after the unit suite. Reported, not gated. Current numbers (cli.py
+  omitted since it's argparse glue exercised by the CLI smoke step):
+  cache.py 95%, kernels.py 97%, codebook.py 94%, packing/qjl/rotation
+  100%. Total **93%**.
+- **`CONTRIBUTING.md`.** Setup, local-check commands, repo layout,
+  tool-config map, tripwire pointers to the fused-SDPA post-mortems,
+  release process.
+- **CLI input validation.** Three argparse type helpers
+  (`_positive_int`, `_quantize_bits`, `_csv_positive_ints`) wired into
+  `--max-tokens`, `--residual-window`, `--key-bits`, `--value-bits`,
+  `--contexts`. Invalid input now fails fast with a clear message
+  instead of mid-run `ValueError`s. `--key-bits` / `--value-bits` were
+  previously typed `int` even though `apply_turboquant` accepts 3.5;
+  fixed. 7 new tests.
+- **Coverage of the `metal_dequant` pure-MLX fallback path.** The
+  fallback's a sticky safety net (`_metal_dequant_disabled`); previously
+  untested. New test forces the flag on, runs the same workload as
+  `test_compressed_key_quality_4bit`, asserts the same ≥0.99 cos sim.
+
+### Changed
+
+- **`ruff check` now scans `tests/` too** (was `mlx_turboquant/` only).
+  Auto-fixed 18 pre-existing violations (sorted-imports, unused
+  imports, useless f-prefixes), hand-fixed 2 unused locals.
+- **CI lint split into a fast Linux job.** `ruff` runs on
+  `ubuntu-latest` (no MLX needed) before the macos-14 test matrix —
+  fail-fast on style without burning Apple-Silicon minutes. The macos
+  job keeps `ruff` as a sanity check; pyright stays in macos because it
+  needs to import-resolve mlx.
+- **`pyrightconfig.json` consolidated into `[tool.pyright]` in
+  `pyproject.toml`.** Single source of truth for tool config.
+- **Dead `qjl_inner_product` removed.** Zero callers anywhere; intended
+  for future fused-attention work that already concluded as a negative
+  result. Recoverable from git if needed.
+- **`docs/INTERNALS.md` corrected.** Was claiming `metal_quantize_4bit`
+  was wired into the compress hot path. It isn't — cache.py uses pure
+  MLX. Section rewritten to match reality and explain why the kernel
+  stays unwired (v1.0.2 microbench: MLX wins for realistic batches).
+
+### Test counts
+
+- v1.0.2 shipped at 207 passing.
+- v1.0.3: **214 passing** (+7 CLI validator tests).
+
 ## [1.0.2] — 2026-04-29
 
 Patch release. Continued post-v1.0 polish — model-compatibility fix,

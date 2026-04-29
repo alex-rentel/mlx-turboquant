@@ -40,7 +40,7 @@ Deprecations will be announced via DeprecationWarning for at least one
 minor version before removal.
 """
 
-__version__ = "1.0.2"
+__version__ = "1.0.3"
 
 from .cache import TurboQuantKVCache
 from .patch import apply_turboquant, enable_turboquant

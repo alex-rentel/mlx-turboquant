@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mlx-turboquant"
-version = "1.0.2"
+version = "1.0.3"
 description = "Near-optimal KV cache quantization for Apple Silicon using MLX"
 readme = "README.md"
 license = "MIT"
