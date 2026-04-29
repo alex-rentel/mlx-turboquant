@@ -62,3 +62,10 @@ jobs:
         # test_integration.py is the @pytest.mark.slow real-model test
         # (downloads multi-GB checkpoints); run it manually before release.
         run: python -m pytest tests/ -q --ignore=tests/test_integration.py
+
+      - name: Coverage report
+        # Coverage runs against the same suite — fast since pytest-cov
+        # piggybacks on the existing collection. Reported, not gated:
+        # surfaces gaps without blocking PRs on coverage drops.
+        if: matrix.python-version == '3.12'
+        run: python -m pytest tests/ -q --ignore=tests/test_integration.py --cov=mlx_turboquant --cov-report=term

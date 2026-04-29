@@ -48,6 +48,7 @@ dependencies = [
 codebooks = ["scipy>=1.10.0"]
 dev = [
     "pytest>=7.0",
+    "pytest-cov>=4.0",
     "scipy>=1.10.0",
     "ruff>=0.5",
     "pyright>=1.1.350",
@@ -72,6 +73,19 @@ mlx_turboquant = ["codebooks/*.npz", "py.typed"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["slow: marks tests that download and load real models"]
+
+[tool.coverage.run]
+source = ["mlx_turboquant"]
+omit = ["mlx_turboquant/cli.py"]  # CLI argparse paths exercised manually
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+show_missing = true
+skip_covered = false
 
 [tool.ruff]
 line-length = 110
