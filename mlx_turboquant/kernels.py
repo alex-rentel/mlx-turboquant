@@ -18,8 +18,26 @@ decode path. ``TurboQuantKVCache`` uses it via the lazy import in
 wired into the compress hot path** — ``cache._quantize_kv`` runs the
 pure-MLX ``rotate`` + ``quantize_scalar`` + ``pack_indices`` pipeline
 instead. The kernel is preserved (and tested) so a future wire-up has
-a regression gate. The 2D shared-memory layout below is the foundation
-for that wire-up.
+a regression gate.
+
+A microbenchmark on M1 Max 64GB / mlx 0.31.1 (N=tokens, D=head_dim,
+30 trials, 5 warmup, ms per call) compares the kernel against the
+production MLX path:
+
+    shape          MLX     kernel   speedup
+    N=256  D=128   0.46    0.33     1.37x   (kernel wins)
+    N=512  D=128   0.50    0.40     1.23x   (kernel wins)
+    N=1024 D=128   0.59    0.61     0.96x   (~tie)
+    N=2048 D=128   0.71    0.98     0.72x   (MLX wins)
+    N=4096 D=128   0.83    1.47     0.57x   (MLX wins)
+    N=1024 D=256   0.77    1.50     0.52x   (MLX wins)
+
+Crossover sits near N ≈ 1024 at D=128. Realistic compress batches
+flatten ``(B, H, T)`` together, so any model with H ≥ 16 or T ≥ 128
+lands in MLX-wins territory. The hot path stays on MLX. The kernel
+remains useful for small-batch experiments and as future-work
+foundation if simd_sum reduction or chunk-dim templating later closes
+the gap at larger shapes.
 
 The ``fused_qk_scores_{2,3,4}bit`` kernels and ``pre_rotate_query`` utility
 (in ``mlx_turboquant.rotation``) ship as *research-only primitives* and
