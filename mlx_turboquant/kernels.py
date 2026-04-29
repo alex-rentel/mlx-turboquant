@@ -7,11 +7,19 @@ These kernels eliminate intermediate array allocations by fusing:
 Each kernel runs as a single Metal dispatch, avoiding Python overhead and
 intermediate tensor materialization.
 
-Research-only primitives
-------------------------
+Wire-up status
+--------------
 
-The ``metal_dequantize`` and ``metal_quantize_4bit`` kernels are on the
-supported decode path and are used by ``TurboQuantKVCache`` automatically.
+``metal_dequantize`` is the only kernel currently on the supported
+decode path. ``TurboQuantKVCache`` uses it via the lazy import in
+``cache.py`` to dequantize compressed tokens for attention.
+
+``metal_quantize_4bit`` is a public utility but **is not currently
+wired into the compress hot path** — ``cache._quantize_kv`` runs the
+pure-MLX ``rotate`` + ``quantize_scalar`` + ``pack_indices`` pipeline
+instead. The kernel is preserved (and tested) so a future wire-up has
+a regression gate. The 2D shared-memory layout below is the foundation
+for that wire-up.
 
 The ``fused_qk_scores_{2,3,4}bit`` kernels and ``pre_rotate_query`` utility
 (in ``mlx_turboquant.rotation``) ship as *research-only primitives* and
@@ -221,34 +229,42 @@ _quant_4bit_norms_kernel = mx.fast.metal_kernel(
 )
 
 _QUANT_4BIT_PACK_SOURCE = """
-    uint byte_idx = thread_position_in_grid.x;
+    // 2D grid: x = byte index within row (0..D/2-1), y = row (0..N-1).
+    // One threadgroup per row (TG size = D/2). All threads in the TG
+    // cooperatively load the normalized input vector into shared memory
+    // once, then compute their byte's two output coordinates from the
+    // shared vector — instead of recomputing inp * inv_norm D times
+    // inside every per-byte inner loop. This drops the kernel from
+    // O(D^2) global reads per row to O(D).
+    uint col_pair = thread_position_in_grid.x;
+    uint row = thread_position_in_grid.y;
     uint D_val = D;
     uint half_D = D_val / 2;
-    uint row = byte_idx / half_D;
-    uint col_pair = byte_idx % half_D;
     uint num_boundaries = 15;  // 4-bit = 16 levels = 15 boundaries
+
+    threadgroup float shared_x[D];
 
     float norm_val = norms[row];
     float inv_norm = (norm_val > 1e-10f) ? (1.0f / norm_val) : 0.0f;
+
+    uint local_id = thread_position_in_threadgroup.x;
+    uint local_size = threads_per_threadgroup.x;
+    for (uint k = local_id; k < D_val; k += local_size) {
+        shared_x[k] = inp[row * D_val + k] * inv_norm;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
 
     uint8_t result = 0;
     for (uint sub = 0; sub < 2; sub++) {
         uint j = col_pair * 2 + sub;  // original dimension
 
-        // Normalize
-        float val = inp[row * D_val + j] * inv_norm;
-
-        // Rotate: rotated[j] = dot(input_normalized, rotation[j, :])
-        // But we need rotated_j = sum_k( normalized_k * rotation[j, k] )
-        // Wait — rotation maps input to rotated space: y = R * x
-        // y[j] = sum_k R[j,k] * x[k]
+        // y[j] = sum_k R[j,k] * x_normalized[k]
         float rotated = 0.0f;
         for (uint k = 0; k < D_val; k++) {
-            float x_k = inp[row * D_val + k] * inv_norm;
-            rotated += rotation[j * D_val + k] * x_k;
+            rotated += rotation[j * D_val + k] * shared_x[k];
         }
 
-        // Quantize: count how many boundaries are exceeded
+        // Quantize: count how many boundaries are exceeded.
         uint idx = 0;
         for (uint b = 0; b < num_boundaries; b++) {
             idx += (rotated > boundaries[b]) ? 1 : 0;
@@ -261,7 +277,7 @@ _QUANT_4BIT_PACK_SOURCE = """
         }
     }
 
-    packed[byte_idx] = result;
+    packed[row * half_D + col_pair] = result;
 """
 
 _quant_4bit_pack_kernel = mx.fast.metal_kernel(
@@ -354,15 +370,19 @@ def metal_quantize_4bit(inp: mx.array, rotation: mx.array,
         template=[("D", D)],
     )[0]
 
-    # Pass 2: normalize + rotate + quantize + pack
+    # Pass 2: normalize + rotate + quantize + pack.
+    # 2D grid: (D/2, N). One threadgroup per row, TG size = D/2 threads
+    # (one thread per output byte for that row). All threads in the TG
+    # cooperatively pre-normalize the input row into threadgroup shared
+    # memory before any rotation work — eliminates the O(D) redundant
+    # input reads per byte that the original 1D kernel had.
     half_D = D // 2
     total_bytes = N * half_D
-    tg_size = min(256, total_bytes)
 
     packed = _quant_4bit_pack_kernel(
         inputs=[inp_f32, norms, rotation_f32, boundaries_f32],
-        grid=(total_bytes, 1, 1),
-        threadgroup=(tg_size, 1, 1),
+        grid=(half_D, N, 1),
+        threadgroup=(half_D, 1, 1),
         output_shapes=[(total_bytes,)],
         output_dtypes=[mx.uint8],
         template=[("D", D)],

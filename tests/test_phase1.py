@@ -589,5 +589,72 @@ class TestIntegration:
         assert ratio > 6.0, f"Compression ratio {ratio:.1f}x too low"
 
 
+class TestMetalQuantize4bitKernel:
+    """Correctness tests for the fused 4-bit quantize Metal kernel.
+
+    The kernel (`metal_quantize_4bit`) is currently dead code on the
+    supported decode path — `cache.py` quantizes via the pure-MLX
+    `_rotate_and_norm` + `quantize_scalar` + `pack_indices` pipeline.
+    We still test it because it is a public utility in
+    `mlx_turboquant.kernels` and any future wire-up needs a regression
+    gate.
+    """
+
+    @pytest.mark.parametrize("D", [64, 96, 128, 256])
+    def test_quantize_dequantize_roundtrip_preserves_direction(self, D):
+        """Quantize -> Metal dequantize round-trip recovers vector
+        direction with cos sim well above 0.95 at 4-bit."""
+        from mlx_turboquant.codebook import get_codebook
+        from mlx_turboquant.kernels import metal_dequantize, metal_quantize_4bit
+        from mlx_turboquant.rotation import get_rotation_matrix
+
+        np.random.seed(D)
+        N = 32
+        inp = mx.array(np.random.randn(N, D).astype(np.float32))
+        rotation = get_rotation_matrix(D, seed=42)
+        centroids, boundaries = get_codebook(D, 4)
+
+        packed, norms = metal_quantize_4bit(inp, rotation, boundaries)
+        decoded = metal_dequantize(packed, norms, centroids, rotation, 4, D)
+
+        cos = mx.sum(inp * decoded, axis=-1) / (
+            mx.linalg.norm(inp, axis=-1) * mx.linalg.norm(decoded, axis=-1) + 1e-9
+        )
+        mean_cos = float(mx.mean(cos))
+        assert mean_cos > 0.95, f"D={D}: 4-bit roundtrip cos sim {mean_cos:.4f}"
+
+    def test_quantize_norms_match_reference(self):
+        """Kernel-computed norms equal np.linalg.norm of the input rows."""
+        from mlx_turboquant.codebook import get_codebook
+        from mlx_turboquant.kernels import metal_quantize_4bit
+        from mlx_turboquant.rotation import get_rotation_matrix
+
+        np.random.seed(123)
+        N, D = 16, 128
+        inp_np = np.random.randn(N, D).astype(np.float32)
+        inp = mx.array(inp_np)
+        rotation = get_rotation_matrix(D, seed=42)
+        _, boundaries = get_codebook(D, 4)
+
+        _packed, norms = metal_quantize_4bit(inp, rotation, boundaries)
+        ref_norms = np.linalg.norm(inp_np, axis=-1)
+        np.testing.assert_allclose(np.array(norms), ref_norms, atol=1e-4, rtol=1e-4)
+
+    def test_packed_shape_is_half_D(self):
+        """Output packed array has shape (N, D/2) uint8."""
+        from mlx_turboquant.codebook import get_codebook
+        from mlx_turboquant.kernels import metal_quantize_4bit
+        from mlx_turboquant.rotation import get_rotation_matrix
+
+        N, D = 8, 128
+        inp = mx.array(np.random.randn(N, D).astype(np.float32))
+        rotation = get_rotation_matrix(D, seed=42)
+        _, boundaries = get_codebook(D, 4)
+        packed, norms = metal_quantize_4bit(inp, rotation, boundaries)
+        assert packed.shape == (N, D // 2)
+        assert packed.dtype == mx.uint8
+        assert norms.shape == (N,)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
