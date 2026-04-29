@@ -9,7 +9,6 @@ minimize E[(X - Q(X))^2] for this distribution.
 import math
 import os
 from pathlib import Path
-from typing import Optional
 
 import mlx.core as mx
 import numpy as np

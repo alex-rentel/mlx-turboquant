@@ -6,16 +6,14 @@ Compresses KV vectors using TurboQuant (Algorithm 1, MSE-optimized) with:
 - Outlier channel detection (first-pass norm analysis)
 """
 
-from typing import Any, Optional
+from typing import Any
 
 import mlx.core as mx
-import mlx.nn as nn
-import numpy as np
 
-from .codebook import get_codebook, quantize_scalar, dequantize_scalar
-from .rotation import get_rotation_matrix, rotate, inverse_rotate
+from .codebook import dequantize_scalar, get_codebook, quantize_scalar
 from .packing import pack_indices, unpack_indices
-from .qjl import get_projection_matrix, qjl_quantize, qjl_dequantize
+from .qjl import get_projection_matrix, qjl_dequantize, qjl_quantize
+from .rotation import get_rotation_matrix, inverse_rotate, rotate
 
 
 class TurboQuantKVCache:
@@ -89,29 +87,29 @@ class TurboQuantKVCache:
         # Independent of the sliding residual window. Used to permanently
         # preserve system prompt tokens that define tool schemas, instruction
         # format, etc. Disabled when fp16_sink_size == 0.
-        self.sink_keys: Optional[mx.array] = None   # (B, H, fp16_sink_size, D)
-        self.sink_values: Optional[mx.array] = None # (B, H, fp16_sink_size, D)
+        self.sink_keys: mx.array | None = None   # (B, H, fp16_sink_size, D)
+        self.sink_values: mx.array | None = None # (B, H, fp16_sink_size, D)
         self._sink_len: int = 0                     # valid tokens in sink (0..fp16_sink_size)
 
         # FP16 storage for recent tokens (residual window)
-        self.keys: Optional[mx.array] = None       # (B, H, capacity, D) pre-allocated
-        self.values: Optional[mx.array] = None      # (B, H, capacity, D)
+        self.keys: mx.array | None = None       # (B, H, capacity, D) pre-allocated
+        self.values: mx.array | None = None      # (B, H, capacity, D)
         self._fp16_len: int = 0                     # valid tokens in FP16 buffer
         self._fp16_capacity: int = 0                # allocated capacity
 
         # Compressed storage for older tokens
         # For integer bits: single packed array. For fractional: (packed_hi, packed_lo).
-        self._compressed_keys: Optional[mx.array] = None      # packed indices (or hi part)
-        self._compressed_keys_lo: Optional[mx.array] = None   # lo part (fractional only)
-        self._compressed_key_norms: Optional[mx.array] = None
-        self._compressed_values: Optional[mx.array] = None    # packed indices (or hi part)
-        self._compressed_values_lo: Optional[mx.array] = None # lo part (fractional only)
-        self._compressed_value_norms: Optional[mx.array] = None
+        self._compressed_keys: mx.array | None = None      # packed indices (or hi part)
+        self._compressed_keys_lo: mx.array | None = None   # lo part (fractional only)
+        self._compressed_key_norms: mx.array | None = None
+        self._compressed_values: mx.array | None = None    # packed indices (or hi part)
+        self._compressed_values_lo: mx.array | None = None # lo part (fractional only)
+        self._compressed_value_norms: mx.array | None = None
         self._compressed_len: int = 0
 
         # Decompressed cache (avoids re-dequantizing every decode step)
-        self._decompressed_keys_cache: Optional[mx.array] = None
-        self._decompressed_values_cache: Optional[mx.array] = None
+        self._decompressed_keys_cache: mx.array | None = None
+        self._decompressed_values_cache: mx.array | None = None
         self._decompressed_valid: bool = False
 
         # Sequence offset (total tokens seen so far)
@@ -357,7 +355,15 @@ class TurboQuantKVCache:
         cache would have been baked in at compression time during the
         original session.
         """
+        # Invariant: when this is called, the compressed-side fields are populated
+        # together. The asserts narrow Optional[mx.array] for the type checker.
+        assert self._compressed_keys is not None
+        assert self._compressed_key_norms is not None
+        assert self._compressed_values is not None
+        assert self._compressed_value_norms is not None
+
         if self._k_fractional:
+            assert self._compressed_keys_lo is not None
             self._decompressed_keys_cache = self._dequantize_kv_fractional(
                 self._compressed_keys, self._compressed_keys_lo,
                 self._compressed_key_norms,
@@ -365,12 +371,14 @@ class TurboQuantKVCache:
                 self.k_centroids_lo, self._k_bits_lo,
             )
         else:
+            assert self.k_centroids is not None
             self._decompressed_keys_cache = self._dequantize_kv(
                 self._compressed_keys, self._compressed_key_norms,
                 self.k_centroids, int(self.key_bits),
             )
 
         if self._v_fractional:
+            assert self._compressed_values_lo is not None
             self._decompressed_values_cache = self._dequantize_kv_fractional(
                 self._compressed_values, self._compressed_values_lo,
                 self._compressed_value_norms,
@@ -378,6 +386,7 @@ class TurboQuantKVCache:
                 self.v_centroids_lo, self._v_bits_lo,
             )
         else:
+            assert self.v_centroids is not None
             self._decompressed_values_cache = self._dequantize_kv(
                 self._compressed_values, self._compressed_value_norms,
                 self.v_centroids, int(self.value_bits),
@@ -404,6 +413,9 @@ class TurboQuantKVCache:
         Returns:
             Corrected tensor (B, H, T, D) with reduced quantization error
         """
+        # Invariant: this method is only entered when qjl_correction=True,
+        # which guarantees _qjl_projection was allocated in __init__.
+        assert self._qjl_projection is not None
         residual = (original.astype(mx.float32)
                     - decompressed.astype(mx.float32))
         # Flatten leading axes for projection
@@ -436,6 +448,8 @@ class TurboQuantKVCache:
             bits = int(self.key_bits if is_key else self.value_bits)
             centroids = self.k_centroids if is_key else self.v_centroids
             boundaries = self.k_boundaries if is_key else self.v_boundaries
+            # Invariant: integer-bit branch always allocates these in __init__.
+            assert centroids is not None and boundaries is not None
 
             packed, norms = self._quantize_kv(old_tensor, centroids, boundaries, bits)
             decompressed = self._dequantize_kv(packed, norms, centroids, bits)
@@ -454,6 +468,8 @@ class TurboQuantKVCache:
                 self._compressed_keys_lo = packed_lo
                 self._compressed_key_norms = norms
             else:
+                # Norms field is initialized in lockstep with the keys field above.
+                assert self._compressed_key_norms is not None
                 self._compressed_keys = mx.concatenate([self._compressed_keys, packed_hi], axis=2)
                 if packed_lo is not None:
                     self._compressed_keys_lo = mx.concatenate(
@@ -468,6 +484,7 @@ class TurboQuantKVCache:
                 self._compressed_values_lo = packed_lo
                 self._compressed_value_norms = norms
             else:
+                assert self._compressed_value_norms is not None
                 self._compressed_values = mx.concatenate([self._compressed_values, packed_hi], axis=2)
                 if packed_lo is not None:
                     self._compressed_values_lo = mx.concatenate(
@@ -548,6 +565,9 @@ class TurboQuantKVCache:
             self._decompressed_keys_cache = dk
             self._decompressed_values_cache = dv
         else:
+            # Keys cache is the only field guarded above; values cache moves
+            # in lockstep.
+            assert self._decompressed_values_cache is not None
             self._decompressed_keys_cache = mx.concatenate(
                 [self._decompressed_keys_cache, dk], axis=2
             )
@@ -688,7 +708,7 @@ class TurboQuantKVCache:
         return all_keys, all_values
 
     def make_mask(self, N: int, offset: int = 0, return_array: bool = False,
-                  window_size: Optional[int] = None) -> Optional[Any]:
+                  window_size: int | None = None) -> Any | None:
         """Generate attention mask. Returns 'causal' for standard causal masking.
 
         Sliding-window attention is not implemented for TurboQuantKVCache —

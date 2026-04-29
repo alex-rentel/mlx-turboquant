@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mlx-turboquant"
-version = "1.0.0"
+version = "1.0.1"
 description = "Near-optimal KV cache quantization for Apple Silicon using MLX"
 readme = "README.md"
 license = "MIT"
@@ -48,6 +48,8 @@ codebooks = ["scipy>=1.10.0"]
 dev = [
     "pytest>=7.0",
     "scipy>=1.10.0",
+    "ruff>=0.5",
+    "pyright>=1.1.350",
 ]
 
 [project.urls]
@@ -69,3 +71,15 @@ mlx_turboquant = ["codebooks/*.npz", "py.typed"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["slow: marks tests that download and load real models"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+extend-exclude = ["dist", "build", "benchmarks/results"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+    "E501",  # line length handled by formatter / not always actionable for math-heavy code
+    "B008",  # default-arg function calls (mx.array(...) defaults are intentional in our API)
+]

@@ -10,6 +10,7 @@ import mlx.core as mx
 def run_generate(args):
     """Generate text with TurboQuant KV cache compression."""
     from mlx_lm import load
+
     from .patch import apply_turboquant
 
     print(f"Loading model: {args.model}")
@@ -36,7 +37,7 @@ def run_generate(args):
     # Decode
     tokens = []
     t_decode_start = time.perf_counter()
-    for i in range(args.max_tokens):
+    for _ in range(args.max_tokens):
         next_token = mx.argmax(logits[:, -1, :], axis=-1)
         token_id = next_token.item()
 
@@ -50,10 +51,10 @@ def run_generate(args):
     t_decode = time.perf_counter() - t_decode_start
     output = tokenizer.decode(tokens)
 
-    print(f"\n--- Generation ---")
+    print("\n--- Generation ---")
     print(f"Prompt: {args.prompt}")
     print(f"Output: {output}")
-    print(f"\n--- Stats ---")
+    print("\n--- Stats ---")
     print(f"Prefill: {inputs.shape[1]} tokens in {t_prefill:.2f}s "
           f"({inputs.shape[1]/t_prefill:.0f} tok/s)")
     print(f"Decode: {len(tokens)} tokens in {t_decode:.2f}s "

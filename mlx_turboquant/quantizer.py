@@ -4,20 +4,18 @@ Implements Algorithm 1 (TurboQuant_mse) and Algorithm 2 (TurboQuant_prod)
 from the paper. These operate on raw MLX arrays — no model awareness.
 """
 
-import math
 from dataclasses import dataclass
-from typing import Optional
 
 import mlx.core as mx
 
-from .codebook import get_codebook, quantize_scalar, dequantize_scalar
-from .rotation import get_rotation_matrix, rotate, inverse_rotate
+from .codebook import dequantize_scalar, get_codebook, quantize_scalar
 from .packing import pack_indices, unpack_indices
 from .qjl import (
     get_projection_matrix,
-    qjl_quantize,
     qjl_dequantize,
+    qjl_quantize,
 )
+from .rotation import get_rotation_matrix, inverse_rotate, rotate
 
 
 @dataclass
@@ -28,8 +26,8 @@ class QuantizedTensor:
     bits: int                  # Bit-width used
     d: int                     # Original dimension
     # For TurboQuant_prod only:
-    qjl_signs: Optional[mx.array] = None
-    qjl_norms: Optional[mx.array] = None
+    qjl_signs: mx.array | None = None
+    qjl_norms: mx.array | None = None
 
 
 class TurboQuantMSE:
@@ -121,7 +119,7 @@ class TurboQuantProd:
     KV cache replacement. Use TurboQuantMSE unless you have fused attention kernels.
     """
 
-    def __init__(self, d: int, bits: int = 4, qjl_dim: Optional[int] = None,
+    def __init__(self, d: int, bits: int = 4, qjl_dim: int | None = None,
                  seed: int = 42, qjl_seed: int = 12345):
         """
         Args:

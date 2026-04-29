@@ -4,7 +4,6 @@ Replaces the default KV cache with TurboQuantKVCache for each layer.
 Works with Llama, Qwen, Mistral, Gemma, and other mlx-lm models.
 """
 
-from typing import Optional
 
 import mlx.nn as nn
 
@@ -94,8 +93,8 @@ def detect_outlier_layers(model: nn.Module, threshold: float = 3.0) -> list[int]
     Layers where max key norm exceeds threshold * median are marked as outliers.
     """
     import mlx.core as mx
-    from mlx_lm.models.cache import KVCache
     import numpy as np
+    from mlx_lm.models.cache import KVCache
 
     inner = getattr(model, "model", model)
     layers = getattr(inner, "layers", [])
@@ -139,11 +138,11 @@ def apply_turboquant(
     key_bits: float = 4,
     value_bits: float = 2,
     residual_window: int = 128,
-    head_dim: Optional[int] = None,
-    num_kv_heads: Optional[int] = None,
-    num_layers: Optional[int] = None,
+    head_dim: int | None = None,
+    num_kv_heads: int | None = None,
+    num_layers: int | None = None,
     rotation_seed: int = 42,
-    skip_layers: Optional[list[int]] = None,
+    skip_layers: list[int] | None = None,
     auto_detect_outliers: bool = True,
     fp16_sink_size: int = 0,
     chunk_size: int = 0,
@@ -199,19 +198,23 @@ def apply_turboquant(
     # Auto-adjust bits for models with few KV heads (more sensitive to compression)
     import warnings
     if nkv <= 2 and key_bits < 4:
-        warnings.warn(
-            f"Model has only {nkv} KV heads. "
-            f"Upgrading key_bits from {key_bits} to 4 for stability.",
-            UserWarning, stacklevel=2,
-        )
+        original_key_bits = key_bits
         key_bits = 4
-    if nkv <= 2 and value_bits < 3:
         warnings.warn(
-            f"Model has only {nkv} KV heads. "
-            f"Upgrading value_bits from {value_bits} to 3 for stability.",
+            f"Model has only {nkv} KV heads — upgrading key_bits "
+            f"{original_key_bits} → {key_bits} for stability. "
+            f"Effective config: key_bits={key_bits}, value_bits={value_bits}.",
             UserWarning, stacklevel=2,
         )
+    if nkv <= 2 and value_bits < 3:
+        original_value_bits = value_bits
         value_bits = 3
+        warnings.warn(
+            f"Model has only {nkv} KV heads — upgrading value_bits "
+            f"{original_value_bits} → {value_bits} for stability. "
+            f"Effective config: key_bits={key_bits}, value_bits={value_bits}.",
+            UserWarning, stacklevel=2,
+        )
 
     # Determine which layers to skip
     layers_to_skip = set(skip_layers or [])

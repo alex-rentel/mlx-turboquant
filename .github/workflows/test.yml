@@ -46,6 +46,12 @@ jobs:
           python --version
           python -c "import mlx_turboquant; print('mlx-turboquant', mlx_turboquant.__version__)"
 
+      - name: Lint (ruff)
+        run: ruff check mlx_turboquant/
+
+      - name: Type-check (pyright)
+        run: pyright
+
       - name: Smoke tests (fail fast — public API contract)
         run: python -m pytest tests/test_smoke.py -v
 
@@ -53,4 +59,6 @@ jobs:
         run: mlx-turboquant --help
 
       - name: Run unit tests
+        # test_integration.py is the @pytest.mark.slow real-model test
+        # (downloads multi-GB checkpoints); run it manually before release.
         run: python -m pytest tests/ -q --ignore=tests/test_integration.py

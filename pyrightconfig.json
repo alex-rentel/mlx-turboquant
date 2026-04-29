@@ -1,0 +1,15 @@
+{
+  "include": ["mlx_turboquant"],
+  "exclude": ["**/__pycache__", "build", "dist"],
+  "typeCheckingMode": "basic",
+  "pythonVersion": "3.10",
+  "pythonPlatform": "Darwin",
+  "reportOptionalSubscript": "none",
+  "reportOptionalMemberAccess": "none",
+  "reportOptionalCall": "none",
+  "reportOptionalOperand": "none",
+  "reportOptionalIterable": "none",
+  "reportCallIssue": "none",
+  "reportAssignmentType": "warning",
+  "reportArgumentType": "error"
+}
