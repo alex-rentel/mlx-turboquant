@@ -17,24 +17,32 @@ Daliri, Hadian, Mirrokni — Google Research, ICLR 2026).
 
 ## Install
 
+The latest release ([v1.0.4](https://github.com/alex-rentel/eden-turboquant/releases/tag/v1.0.4))
+ships as a wheel attached to the GitHub Release:
+
 ```bash
-pip install mlx-turboquant
+pip install https://github.com/alex-rentel/eden-turboquant/releases/download/v1.0.4/mlx_turboquant-1.0.4-py3-none-any.whl
 ```
 
-Or from source:
+The PyPI listing (`pip install mlx-turboquant`) currently serves v1.0.0
+and lags the GitHub releases — use the wheel URL above to pick up the
+post-v1.0.0 fixes (correct type annotations, raised mlx floor,
+sliding-window-attention model compatibility, codebook cache redirect).
+
+From source:
 
 ```bash
-git clone https://github.com/alex-rentel/mlx-turboquant.git
-cd mlx-turboquant
+git clone https://github.com/alex-rentel/eden-turboquant.git
+cd eden-turboquant
 pip install -e .
 ```
 
 Requires Python 3.10+ (tested on 3.10–3.13), macOS 13+, Apple Silicon
 (M1/M2/M3/M4), and `mlx >= 0.31`.
 
-> Last validated 2026-04-29 against MLX 0.31.1 on M1 Max — full suite
-> green at 205 unit tests, real-model integration test green on
-> Qwen3-0.6B-4bit.
+> Last validated 2026-04-29 against MLX 0.31.1 on M1 Max — 228 unit
+> tests + real-model integration test (Qwen3-0.6B-4bit) green; project
+> coverage 95%.
 
 ## Quick start
 
