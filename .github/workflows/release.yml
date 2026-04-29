@@ -23,7 +23,7 @@ jobs:
     name: Build wheel + sdist and create draft Release
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           # Inputs / refs flow through actions/checkout's own input handling,
           # not into run: shell commands, so this is safe.
