@@ -432,5 +432,60 @@ class TestPatchEdgeCases:
             "linear_attn layer 3 should be the model default cache"
 
 
+    def test_sliding_window_attention_layers_skipped(self):
+        """SWA layers (RotatingKVCache default) must NOT receive a
+        TurboQuantKVCache, since TurboQuantKVCache.make_mask raises on
+        window_size. Uses a fake model whose make_cache returns a mix of
+        KVCache and RotatingKVCache so the test runs without a real model.
+        """
+        from mlx_lm.models.cache import KVCache, RotatingKVCache
+        from mlx_turboquant.cache import TurboQuantKVCache
+        from mlx_turboquant.patch import apply_turboquant
+
+        class FakeArgs:
+            head_dim = 128
+            num_key_value_heads = 8
+            num_attention_heads = 8
+            hidden_size = 1024
+            num_hidden_layers = 4
+
+        class FakeSelfAttnLayer:
+            def __init__(self):
+                self.self_attn = object()
+
+        class FakeInner:
+            def __init__(self):
+                self.args = FakeArgs()
+                self.layers = [FakeSelfAttnLayer() for _ in range(4)]
+
+        class FakeModel:
+            def __init__(self):
+                self.model = FakeInner()
+                self.args = FakeArgs()
+
+            # Class-level make_cache: alternating standard / sliding-window.
+            def make_cache(self):
+                return [
+                    KVCache(),
+                    RotatingKVCache(max_size=64, keep=4),
+                    KVCache(),
+                    RotatingKVCache(max_size=64, keep=4),
+                ]
+
+        fake = FakeModel()
+        apply_turboquant(fake, key_bits=4, value_bits=2,
+                         auto_detect_outliers=False)
+        cache = fake.make_cache()
+
+        assert isinstance(cache[0], TurboQuantKVCache), \
+            "standard layer 0 should be TurboQuant"
+        assert isinstance(cache[1], RotatingKVCache), \
+            "SWA layer 1 must keep its RotatingKVCache"
+        assert isinstance(cache[2], TurboQuantKVCache), \
+            "standard layer 2 should be TurboQuant"
+        assert isinstance(cache[3], RotatingKVCache), \
+            "SWA layer 3 must keep its RotatingKVCache"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

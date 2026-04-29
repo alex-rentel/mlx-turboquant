@@ -261,7 +261,16 @@ def apply_turboquant(
             UserWarning, stacklevel=2,
         )
 
-    from mlx_lm.models.cache import KVCache, make_prompt_cache
+    from mlx_lm.models.cache import KVCache, RotatingKVCache, make_prompt_cache
+
+    # `BatchRotatingKVCache` is the batched-decode variant added in newer
+    # mlx-lm versions. Import defensively so we still work on older mlx-lm.
+    swa_cache_classes: tuple = (RotatingKVCache,)
+    try:
+        from mlx_lm.models.cache import BatchRotatingKVCache
+        swa_cache_classes = (RotatingKVCache, BatchRotatingKVCache)
+    except ImportError:
+        pass
 
     # Capture the model's CLASS-LEVEL make_cache (if any) before we shadow
     # it with our own instance attribute. For hybrid architectures this is
@@ -286,14 +295,43 @@ def apply_turboquant(
             if instance_attr is not None:
                 model.make_cache = instance_attr
 
+    # Detect sliding-window-attention layers by probing the model's own
+    # default cache types. TurboQuantKVCache cannot produce a windowed
+    # mask (its make_mask raises NotImplementedError on window_size), so
+    # any layer whose model-default is a RotatingKVCache-family cache must
+    # use that default instead.
+    swa_layers: set[int] = set()
+    try:
+        probe_caches = _build_default_caches()
+        for i, c in enumerate(probe_caches):
+            if i in linear_attn_layers:
+                continue
+            if isinstance(c, swa_cache_classes):
+                swa_layers.add(i)
+    except Exception:
+        pass
+
+    if swa_layers:
+        import warnings
+        warnings.warn(
+            f"Detected {len(swa_layers)} sliding-window-attention layers in "
+            f"model. These layers will use the model's default cache type "
+            f"instead of TurboQuantKVCache.",
+            UserWarning, stacklevel=2,
+        )
+
+    # Layers that need the model's own cache type rather than TurboQuant.
+    default_cache_layers = linear_attn_layers | swa_layers
+    needs_default_caches = bool(default_cache_layers)
+
     def make_cache():
-        # For hybrid models, get the model's preferred cache list once per
-        # call so we can copy the linear-attention slots verbatim.
-        default_caches = _build_default_caches() if has_hybrid else None
+        # When any layer needs the model's preferred cache, build the full
+        # default list once per call so we can copy those slots verbatim.
+        default_caches = _build_default_caches() if needs_default_caches else None
 
         caches = []
         for i in range(nl):
-            if i in linear_attn_layers:
+            if i in default_cache_layers:
                 # Hand back the model's own cache type for this layer.
                 caches.append(default_caches[i])
             elif i in layers_to_skip:
