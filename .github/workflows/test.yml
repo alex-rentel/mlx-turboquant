@@ -82,8 +82,8 @@ jobs:
 
       - name: Coverage report
         # Coverage runs against the same suite — fast since pytest-cov
-        # piggybacks on the existing collection. Threshold gated at 85%
-        # (current is 93%); ample headroom prevents the gate from
+        # piggybacks on the existing collection. Threshold gated at 90%
+        # (current is ~95%); ~5pp headroom prevents the gate from
         # blocking unrelated PRs while still failing on a real drop.
         if: matrix.python-version == '3.12'
-        run: python -m pytest tests/ -q --ignore=tests/test_integration.py --cov=mlx_turboquant --cov-report=term --cov-fail-under=85
+        run: python -m pytest tests/ -q --ignore=tests/test_integration.py --cov=mlx_turboquant --cov-report=term --cov-fail-under=90
