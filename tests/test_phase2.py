@@ -638,6 +638,39 @@ class TestCacheReconstructionQuality:
         median_cos = np.median(cos_sims)
         assert median_cos > 0.85, f"2-bit median cosine sim {median_cos:.4f} too low"
 
+    def test_metal_dequant_fallback_path_matches_kernel(self):
+        """Force the pure-MLX fallback that engages when metal_dequantize
+        fails. The fallback is a sticky safety net set on the cache via
+        ``_metal_dequant_disabled``. This test flips the flag at
+        construction time, runs the same workload as
+        ``test_compressed_key_quality_4bit``, and asserts the same
+        quality bound."""
+        np.random.seed(0)
+        cache = TurboQuantKVCache(head_dim=128, key_bits=4, value_bits=4,
+                                  residual_window=0)
+        cache._metal_dequant_disabled = True  # force the fallback path
+
+        keys_orig = np.random.randn(1, 4, 100, 128).astype(np.float32)
+        values_orig = np.random.randn(1, 4, 100, 128).astype(np.float32)
+        k_out, _v_out = cache.update_and_fetch(
+            mx.array(keys_orig), mx.array(values_orig)
+        )
+
+        k_recon = np.array(k_out)  # materializes the lazy graph
+        cos_sims = []
+        for h in range(4):
+            for t in range(100):
+                orig = keys_orig[0, h, t]
+                recon = k_recon[0, h, t]
+                cos = np.dot(orig, recon) / (
+                    np.linalg.norm(orig) * np.linalg.norm(recon) + 1e-10
+                )
+                cos_sims.append(cos)
+        median_cos = np.median(cos_sims)
+        assert median_cos > 0.99, (
+            f"4-bit fallback path median cos sim {median_cos:.4f} too low"
+        )
+
 
 # ============================================================
 # Model Patching Tests
